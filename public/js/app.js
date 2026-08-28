@@ -6,17 +6,14 @@
   // ── State ──
   const state = {
     panes: {
-      top: { currentPath: '/', viewMode: 'list', items: [], selectedItem: null, selectedItems: new Set() },
-      bottom: { currentPath: '/', viewMode: 'list', items: [], selectedItem: null, selectedItems: new Set() }
+      top: { currentPath: '/', viewMode: 'list', items: [], selectedItem: null, selectedItems: new Set(), expandedPaths: new Set(), treeData: {} },
+      bottom: { currentPath: '/', viewMode: 'list', items: [], selectedItem: null, selectedItems: new Set(), expandedPaths: new Set(), treeData: {} }
     },
     activePane: 'top',
     clipboard: null, // { paths: [], action: 'copy'|'move' }
     terminal: null,
     terminalFitAddon: null,
-    ws: null,
-    // ── Tree ──
-    expandedPaths: new Set(),
-    treeData: {}
+    ws: null
   };
 
   // ── Tree Icons ──
@@ -58,76 +55,85 @@
   }
 
   // ── Tree (Explorer Sidebar) ──
-  async function loadTree(dirPath) {
+  async function loadTree(pane, dirPath) {
     try {
       const d = await api(`/tree?path=${encodeURIComponent(dirPath || '')}`);
-      state.treeData[dirPath || ''] = d.items;
-      renderTree();
+      state.panes[pane].treeData[dirPath || ''] = d.items;
+      renderTree(pane);
     } catch (e) {
       console.error('Tree load error:', e);
     }
   }
 
-  function renderTree() {
-    const items = state.treeData[''] || [];
-    const currentPath = state.panes[state.activePane].currentPath;
-    let html = `<div class="tree-item"><div class="tree-item-content ${currentPath === '/' ? 'active' : ''}" data-path="/" data-has-children="true">
+  function renderTree(pane) {
+    const p = state.panes[pane];
+    const items = p.treeData[''] || [];
+    const containerId = pane === 'top' ? 'tree-container-top' : 'tree-container-bottom';
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    let html = `<div class="tree-item"><div class="tree-item-content ${p.currentPath === '/' ? 'active' : ''}" data-pane="${pane}" data-path="/" data-has-children="true">
       <span class="tree-chevron expanded"></span>
       <span class="tree-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#89b4fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0h2"/></svg></span>
       <span>/ (root)</span>
     </div>`;
 
-    html += renderTreeLevel(items, 0);
+    html += renderTreeLevel(pane, items, 0);
     html += '</div>';
-    document.getElementById('tree-container').innerHTML = html;
-    attachTreeListeners();
+    container.innerHTML = html;
+    attachTreeListeners(pane);
   }
 
-  function renderTreeLevel(items, depth) {
+  function renderTreeLevel(pane, items, depth) {
     if (!items || !items.length) return '';
-    const currentPath = state.panes[state.activePane].currentPath;
+    const p = state.panes[pane];
     return items.map(item => {
-      const expanded = state.expandedPaths.has(item.path);
-      const active = currentPath === item.path;
+      const expanded = p.expandedPaths.has(item.path);
+      const active = p.currentPath === item.path;
       const icon = expanded ? TREE_FOLDER_OPEN_SVG : TREE_FOLDER_SVG;
-      return `<div class="tree-item"><div class="tree-item-content ${active ? 'active' : ''}" data-path="${item.path}" data-has-children="${item.hasChildren}">
+      return `<div class="tree-item"><div class="tree-item-content ${active ? 'active' : ''}" data-pane="${pane}" data-path="${item.path}" data-has-children="${item.hasChildren}">
         <span class="tree-chevron ${expanded ? 'expanded' : ''}">${item.hasChildren ? '▶' : ''}</span>
         <span class="tree-icon">${icon}</span>
         <span>${item.name}</span>
-      </div>${expanded && state.treeData[item.path] ? `<div class="tree-children">${renderTreeLevel(state.treeData[item.path], depth + 1)}</div>` : ''}</div>`;
+      </div>${expanded && p.treeData[item.path] ? `<div class="tree-children">${renderTreeLevel(pane, p.treeData[item.path], depth + 1)}</div>` : ''}</div>`;
     }).join('');
   }
 
-  function attachTreeListeners() {
-    document.querySelectorAll('.tree-item-content').forEach(el => {
+  function attachTreeListeners(pane) {
+    const containerId = pane === 'top' ? 'tree-container-top' : 'tree-container-bottom';
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.querySelectorAll('.tree-item-content').forEach(el => {
       el.addEventListener('click', handleTreeClick);
     });
   }
 
   async function handleTreeClick(e) {
     const el = e.currentTarget;
+    const pane = el.dataset.pane;
     const p = el.dataset.path;
     const hasChildren = el.dataset.hasChildren === 'true';
+    const paneState = state.panes[pane];
 
     if (hasChildren) {
-      if (state.expandedPaths.has(p)) {
-        state.expandedPaths.delete(p);
+      if (paneState.expandedPaths.has(p)) {
+        paneState.expandedPaths.delete(p);
       } else {
-        state.expandedPaths.add(p);
-        if (!state.treeData[p]) await loadTree(p);
+        paneState.expandedPaths.add(p);
+        if (!paneState.treeData[p]) await loadTree(pane, p);
       }
     }
 
-    navigateTo(state.activePane, p, true);
+    navigateTo(pane, p, true);
   }
 
-  function expandParentPaths(p) {
+  function expandParentPaths(pane, p) {
     if (!p || p === '/') return;
     const parts = p.split('/').filter(Boolean);
     let current = '';
     for (const part of parts) {
       current = current ? `${current}/${part}` : part;
-      state.expandedPaths.add('/' + current);
+      state.panes[pane].expandedPaths.add('/' + current);
     }
   }
 
@@ -152,6 +158,37 @@
     document.addEventListener('mouseup', () => {
       if (dragging) {
         dragging = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    });
+
+    // Tree pane vertical resize
+    const treeHandle = document.getElementById('resize-handle-tree');
+    const treeTop = document.getElementById('tree-pane-top');
+    const treeBottom = document.getElementById('tree-pane-bottom');
+    let treeDrag = false;
+
+    treeHandle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      treeDrag = true;
+      document.body.style.cursor = 'row-resize';
+      document.body.style.userSelect = 'none';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!treeDrag) return;
+      const rect = sidebar.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      const h = sidebar.getBoundingClientRect().height;
+      const pct = Math.max(20, Math.min(80, (y / h) * 100));
+      treeTop.style.flex = `0 0 ${pct}%`;
+      treeBottom.style.flex = `0 0 ${100 - pct - 1}%`;
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (treeDrag) {
+        treeDrag = false;
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
       }
@@ -215,8 +252,8 @@
       updateItemCount(pane);
       showStatus('準備完了');
     }).catch(e => showStatus(`エラー: ${e.message}`));
-    if (!skipTree) expandParentPaths(p.currentPath);
-    renderTree();
+    if (!skipTree) expandParentPaths(pane, p.currentPath);
+    renderTree(pane);
   }
 
   function goUp(pane) {
@@ -1141,7 +1178,8 @@
     initResize();
     initLeftSidebarResize();
     initEventListeners();
-    loadTree('');
+    loadTree('top', '');
+    loadTree('bottom', '');
     navigateTo('top', '/');
     navigateTo('bottom', '/');
     updatePaneLabel();
