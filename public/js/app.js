@@ -13,8 +13,15 @@
     clipboard: null, // { paths: [], action: 'copy'|'move' }
     terminal: null,
     terminalFitAddon: null,
-    ws: null
+    ws: null,
+    // ── Tree ──
+    expandedPaths: new Set(),
+    treeData: {}
   };
+
+  // ── Tree Icons ──
+  const TREE_FOLDER_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#89b4fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>';
+  const TREE_FOLDER_OPEN_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#89b4fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1"/><path d="M3 14h4l2 2"/></svg>';
 
   // ── DOM References ──
   const $ = (sel) => document.querySelector(sel);
@@ -48,6 +55,107 @@
 
   function showStatus(msg) {
     elements.statusText.textContent = msg;
+  }
+
+  // ── Tree (Explorer Sidebar) ──
+  async function loadTree(dirPath) {
+    try {
+      const d = await api(`/tree?path=${encodeURIComponent(dirPath || '')}`);
+      state.treeData[dirPath || ''] = d.items;
+      renderTree();
+    } catch (e) {
+      console.error('Tree load error:', e);
+    }
+  }
+
+  function renderTree() {
+    const items = state.treeData[''] || [];
+    const currentPath = state.panes[state.activePane].currentPath;
+    let html = `<div class="tree-item"><div class="tree-item-content ${currentPath === '/' ? 'active' : ''}" data-path="/" data-has-children="true">
+      <span class="tree-chevron expanded"></span>
+      <span class="tree-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#89b4fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0h2"/></svg></span>
+      <span>/ (root)</span>
+    </div>`;
+
+    html += renderTreeLevel(items, 0);
+    html += '</div>';
+    document.getElementById('tree-container').innerHTML = html;
+    attachTreeListeners();
+  }
+
+  function renderTreeLevel(items, depth) {
+    if (!items || !items.length) return '';
+    const currentPath = state.panes[state.activePane].currentPath;
+    return items.map(item => {
+      const expanded = state.expandedPaths.has(item.path);
+      const active = currentPath === item.path;
+      const icon = expanded ? TREE_FOLDER_OPEN_SVG : TREE_FOLDER_SVG;
+      return `<div class="tree-item"><div class="tree-item-content ${active ? 'active' : ''}" data-path="${item.path}" data-has-children="${item.hasChildren}">
+        <span class="tree-chevron ${expanded ? 'expanded' : ''}">${item.hasChildren ? '▶' : ''}</span>
+        <span class="tree-icon">${icon}</span>
+        <span>${item.name}</span>
+      </div>${expanded && state.treeData[item.path] ? `<div class="tree-children">${renderTreeLevel(state.treeData[item.path], depth + 1)}</div>` : ''}</div>`;
+    }).join('');
+  }
+
+  function attachTreeListeners() {
+    document.querySelectorAll('.tree-item-content').forEach(el => {
+      el.addEventListener('click', handleTreeClick);
+    });
+  }
+
+  async function handleTreeClick(e) {
+    const el = e.currentTarget;
+    const p = el.dataset.path;
+    const hasChildren = el.dataset.hasChildren === 'true';
+
+    if (hasChildren) {
+      if (state.expandedPaths.has(p)) {
+        state.expandedPaths.delete(p);
+      } else {
+        state.expandedPaths.add(p);
+        if (!state.treeData[p]) await loadTree(p);
+      }
+    }
+
+    navigateTo(state.activePane, p, true);
+  }
+
+  function expandParentPaths(p) {
+    if (!p || p === '/') return;
+    const parts = p.split('/').filter(Boolean);
+    let current = '';
+    for (const part of parts) {
+      current = current ? `${current}/${part}` : part;
+      state.expandedPaths.add('/' + current);
+    }
+  }
+
+  function initLeftSidebarResize() {
+    const handle = document.getElementById('resize-handle-left');
+    const sidebar = document.getElementById('left-sidebar');
+    let dragging = false;
+
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      dragging = true;
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const w = Math.max(150, Math.min(400, e.clientX));
+      sidebar.style.width = w + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (dragging) {
+        dragging = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    });
   }
 
   // ── File Icons (flat SVG) ──
@@ -107,6 +215,8 @@
       updateItemCount(pane);
       showStatus('準備完了');
     }).catch(e => showStatus(`エラー: ${e.message}`));
+    if (!skipTree) expandParentPaths(p.currentPath);
+    renderTree();
   }
 
   function goUp(pane) {
@@ -1023,12 +1133,15 @@
   function updatePaneLabel() {
     const label = $('#pane-label');
     label.textContent = state.activePane === 'top' ? '上ペイン (Tab: 切替)' : '下ペイン (Tab: 切替)';
+    renderTree();
   }
 
   // ── Initialize ──
   function init() {
     initResize();
+    initLeftSidebarResize();
     initEventListeners();
+    loadTree('');
     navigateTo('top', '/');
     navigateTo('bottom', '/');
     updatePaneLabel();

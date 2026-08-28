@@ -30,6 +30,23 @@ body{font-family:"Segoe UI Variable","Segoe UI",system-ui,-apple-system,sans-ser
 /* Main Container */
 .main-container{display:flex;flex:1;overflow:hidden}
 
+/* Left Sidebar (Explorer Tree) */
+.left-sidebar{width:220px;background:var(--bg-primary);border-right:1px solid var(--border-color);display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
+.sidebar-header{padding:8px 12px;border-bottom:1px solid var(--border-color)}
+.sidebar-header h3{font-size:11px;text-transform:uppercase;color:var(--text-tertiary);letter-spacing:.5px;font-weight:600}
+.tree-container{flex:1;overflow-y:auto;padding:4px 6px}
+.tree-item{user-select:none}
+.tree-item-content{display:flex;align-items:center;gap:5px;padding:3px 6px;border-radius:var(--radius-sm);cursor:pointer;font-size:13px;color:var(--text-primary);transition:background .1s}
+.tree-item-content:hover{background:var(--bg-hover)}
+.tree-item-content.active{background:rgba(137,180,250,.15);color:var(--accent-color)}
+.tree-chevron{width:12px;height:12px;display:flex;align-items:center;justify-content:center;font-size:8px;color:var(--text-tertiary);transition:transform .15s;flex-shrink:0}
+.tree-chevron.expanded{transform:rotate(90deg)}
+.tree-icon{width:16px;height:16px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.tree-icon svg{width:16px;height:16px}
+.tree-children{margin-left:14px}
+.resize-handle{width:3px;background:transparent;cursor:col-resize;transition:background .15s;position:relative;z-index:5}
+.resize-handle:hover,.resize-handle:active{background:var(--accent-color)}
+
 /* Dual Pane */
 .dual-pane{display:flex;flex-direction:column;flex:1;overflow:hidden}
 .pane{display:flex;flex-direction:column;overflow:hidden;min-height:100px}
@@ -47,7 +64,7 @@ body{font-family:"Segoe UI Variable","Segoe UI",system-ui,-apple-system,sans-ser
 /* Resize Handle */
 .resize-handle-h{height:4px;background:transparent;cursor:row-resize;transition:background .15s;position:relative;z-index:5}
 .resize-handle-h:hover,.resize-handle-h:active{background:var(--accent-color)}
-.resize-handle-v{width:4px;background:transparent;cursor:col-resize;transition:background .15s;position:relative;z-index:5}
+.resize-handle-v{width:3px;background:transparent;cursor:col-resize;transition:background .15s;position:relative;z-index:5}
 .resize-handle-v:hover,.resize-handle-v:active{background:var(--accent-color)}
 
 /* File List */
