@@ -317,6 +317,29 @@
     </div>
   </div>
 
+  <!-- D&D Action Dialog -->
+  <div class="dialog-overlay" id="dd-dialog-overlay">
+    <div class="dialog" style="width:320px">
+      <div class="dialog-header">
+        <h3 id="dd-dialog-title">どうしますか？</h3>
+      </div>
+      <div class="dialog-body" style="text-align:center;padding:20px">
+        <p id="dd-dialog-desc" style="margin-bottom:16px;font-size:13px;color:var(--text-secondary)"></p>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <button class="btn primary" id="dd-btn-move" style="width:100%">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;vertical-align:middle;margin-right:4px"><polyline points="15 10 20 15 15 20"/><path d="M4 4v7a4 4 0 004 4h12"/></svg>
+            移動
+          </button>
+          <button class="btn" id="dd-btn-copy" style="width:100%">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;vertical-align:middle;margin-right:4px"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            コピー
+          </button>
+          <button class="btn" id="dd-btn-cancel" style="width:100%">キャンセル</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Upload Dialog -->
   <div class="dialog-overlay" id="upload-overlay">
     <div class="dialog" id="upload-dialog">

@@ -420,11 +420,16 @@
 
       // Drag & Drop
       el.addEventListener('dragstart', (e) => {
-        const p = state.panes[pane];
         state.clipboard = null;
-        el.classList.add('dragging');
+        const p = state.panes[pane];
+        // If the dragged item is in a multi-selection, drag all selected items
+        if (p.selectedItems.size > 1 && p.selectedItems.has(el.dataset.path)) {
+          e.dataTransfer.setData('application/x-servex-paths', JSON.stringify([...p.selectedItems]));
+        } else {
+          e.dataTransfer.setData('application/x-servex-paths', JSON.stringify([el.dataset.path]));
+        }
         e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', el.dataset.path);
+        el.classList.add('dragging');
       });
 
       el.addEventListener('dragend', () => {
@@ -451,27 +456,72 @@
         el.classList.remove('drag-over');
       });
 
-      el.addEventListener('drop', async (e) => {
+      el.addEventListener('drop', (e) => {
         e.preventDefault();
         e.stopPropagation();
         el.classList.remove('drag-over');
-        const sourcePath = e.dataTransfer.getData('text/plain');
+        if (el.dataset.isDirectory !== 'true') return;
+        const pathsRaw = e.dataTransfer.getData('application/x-servex-paths');
+        if (!pathsRaw) return;
+        let sourcePaths;
+        try { sourcePaths = JSON.parse(pathsRaw); } catch (_) { return; }
         const destPath = el.dataset.path;
-        if (!sourcePath || !destPath || sourcePath === destPath) return;
-        try {
-          showStatus('移動中...');
-          await api('/move', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sourcePath, destPath })
-          });
-          showStatus('移動しました');
-          navigateTo(state.activePane, state.panes[state.activePane].currentPath, true);
-        } catch (err) {
-          showStatus(`移動エラー: ${err.message}`);
-        }
+        if (!sourcePaths.length || !destPath) return;
+        // Don't drop onto itself
+        if (sourcePaths.length === 1 && sourcePaths[0] === destPath) return;
+        showDdDialog(sourcePaths, destPath);
       });
     });
+  }
+
+  // ── D&D Action Dialog ──
+  let ddState = null; // { sourcePaths, destPath }
+
+  function showDdDialog(sourcePaths, destPath) {
+    ddState = { sourcePaths, destPath };
+    const overlay = document.getElementById('dd-dialog-overlay');
+    const count = sourcePaths.length;
+    const destName = destPath === '/' ? '/' : destPath.split('/').pop();
+    const desc = count === 1
+      ? `「${sourcePaths[0].split('/').pop()}」を「${destName}」にどうしますか？`
+      : `${count}件のアイテムを「${destName}」にどうしますか？`;
+    document.getElementById('dd-dialog-desc').textContent = desc;
+    overlay.classList.add('show');
+  }
+
+  function hideDdDialog() {
+    document.getElementById('dd-dialog-overlay').classList.remove('show');
+    ddState = null;
+  }
+
+  async function ddAction(action) {
+    const { sourcePaths, destPath } = ddState || {};
+    if (!sourcePaths || !destPath) return;
+    hideDdDialog();
+
+    const isMove = action === 'move';
+    const apiPath = isMove
+      ? (sourcePaths.length === 1 ? '/move' : '/move-batch')
+      : (sourcePaths.length === 1 ? '/copy' : '/copy-batch');
+    const body = sourcePaths.length === 1
+      ? { sourcePath: sourcePaths[0], destPath }
+      : { paths: sourcePaths, destPath };
+
+    try {
+      showStatus(`${isMove ? '移動' : 'コピー'}中...`);
+      await api(apiPath, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      showStatus(`${sourcePaths.length}件を${isMove ? '移動' : 'コピー'}しました`);
+      // Refresh both panes that might be affected
+      ['top', 'bottom'].forEach(pane => {
+        navigateTo(pane, state.panes[pane].currentPath, true);
+      });
+    } catch (err) {
+      showStatus(`${isMove ? '移動' : 'コピー'}エラー: ${err.message}`);
+    }
   }
 
   // ── Context Menu ──
@@ -1059,6 +1109,14 @@
 
     document.addEventListener('click', hideContextMenu);
 
+    // D&D action dialog
+    $('#dd-btn-move').addEventListener('click', () => ddAction('move'));
+    $('#dd-btn-copy').addEventListener('click', () => ddAction('copy'));
+    $('#dd-btn-cancel').addEventListener('click', hideDdDialog);
+    document.getElementById('dd-dialog-overlay').addEventListener('click', (e) => {
+      if (e.target.id === 'dd-dialog-overlay') hideDdDialog();
+    });
+
     // Tree context menu
     $$('#tree-context-menu .menu-item').forEach(item => {
       item.addEventListener('click', () => handleTreeContextAction(item.dataset.taction));
@@ -1153,6 +1211,12 @@
 
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        hideDdDialog();
+        hideContextMenu();
+        hideTreeContextMenu();
+        return;
+      }
       if (e.target.tagName === 'INPUT') return;
 
       const pane = state.activePane;
@@ -1179,9 +1243,29 @@
       }
     });
 
-    // Click on empty area to paste
+    // Click on empty area / Drop on pane background
     ['top', 'bottom'].forEach(pane => {
       const wrapper = $(`.file-list-wrapper[data-pane="${pane}"]`);
+
+      wrapper.addEventListener('dragover', (e) => {
+        if (e.dataTransfer.types.includes('application/x-servex-paths')) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+        }
+      });
+
+      wrapper.addEventListener('drop', (e) => {
+        if (e.target.closest('.file-item')) return; // handled by file-item drop
+        const pathsRaw = e.dataTransfer.getData('application/x-servex-paths');
+        if (!pathsRaw) return;
+        e.preventDefault();
+        let sourcePaths;
+        try { sourcePaths = JSON.parse(pathsRaw); } catch (_) { return; }
+        const destPath = state.panes[pane].currentPath;
+        if (!sourcePaths.length) return;
+        showDdDialog(sourcePaths, destPath);
+      });
+
       wrapper.addEventListener('click', (e) => {
         if (e.target === wrapper || e.target.classList.contains('file-list')) {
           state.activePane = pane;
