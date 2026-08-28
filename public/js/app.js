@@ -686,7 +686,7 @@
       elements.infoEmpty.style.display = 'none';
       elements.infoDetail.style.display = 'block';
 
-      $('#info-icon').textContent = getFileIcon(item);
+      $('#info-icon').innerHTML = getFileIcon(item);
       $('#info-name').textContent = info.name;
       $('#info-path').textContent = info.absPath;
       $('#info-size').textContent = info.isDirectory ? '-' : formatSize(info.size);
