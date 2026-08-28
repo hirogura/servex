@@ -105,7 +105,64 @@
     if (!container) return;
     container.querySelectorAll('.tree-item-content').forEach(el => {
       el.addEventListener('click', handleTreeClick);
+      el.addEventListener('contextmenu', handleTreeContextMenu);
     });
+  }
+
+  // ── Tree Context Menu ──
+  let treeContextTarget = null; // { pane, path, name }
+
+  function handleTreeContextMenu(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const el = e.currentTarget;
+    const pane = el.dataset.pane;
+    const p = el.dataset.path;
+    treeContextTarget = { pane, path: p, name: p === '/' ? '/' : p.split('/').pop() };
+
+    const menu = document.getElementById('tree-context-menu');
+    menu.style.left = e.clientX + 'px';
+    menu.style.top = e.clientY + 'px';
+    menu.classList.add('show');
+  }
+
+  function hideTreeContextMenu() {
+    document.getElementById('tree-context-menu').classList.remove('show');
+  }
+
+  async function handleTreeContextAction(action) {
+    const ctx = treeContextTarget;
+    if (!ctx) return;
+    hideTreeContextMenu();
+
+    switch (action) {
+      case 'mkdir':
+        showMkdirDialog(ctx.path);
+        break;
+      case 'createfile':
+        showCreatefileDialog(ctx.path);
+        break;
+      case 'rename':
+        showRenameDialog({ path: ctx.path, name: ctx.name });
+        break;
+      case 'copy-path':
+        navigator.clipboard.writeText(ctx.path).then(() => showStatus('パスをコピーしました'));
+        break;
+      case 'delete': {
+        if (ctx.path === '/') return;
+        if (!confirm(`「${ctx.name}」を削除しますか？`)) return;
+        try {
+          await api('/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: ctx.path }) });
+          showStatus('削除しました');
+          loadTree(ctx.pane, ctx.path);
+          navigateTo(ctx.pane, state.panes[ctx.pane].currentPath, true);
+        } catch (err) {
+          showStatus(`削除エラー: ${err.message}`);
+        }
+        break;
+      }
+    }
+    treeContextTarget = null;
   }
 
   async function handleTreeClick(e) {
@@ -727,26 +784,28 @@
     });
   }
 
-  function showMkdirDialog() {
+  function showMkdirDialog(targetPath) {
+    const pane = state.activePane;
+    const destPath = targetPath || state.panes[pane].currentPath;
     showDialog('フォルダを作成', `
       <label style="display:block;margin-bottom:6px;font-size:12px;color:var(--text-secondary)">フォルダ名:</label>
       <input type="text" class="dialog-input" id="dialog-mkdir-input" placeholder="新しいフォルダ">
     `, async () => {
       const name = $('#dialog-mkdir-input').value.trim();
       if (!name) throw new Error('フォルダ名を入力してください');
-      const pane = state.activePane;
-      const p = state.panes[pane];
       await api('/mkdir', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: p.currentPath, name })
+        body: JSON.stringify({ path: destPath, name })
       });
       showStatus('フォルダを作成しました');
-      navigateTo(pane, p.currentPath, true);
+      navigateTo(pane, state.panes[pane].currentPath, true);
     });
   }
 
-  function showCreatefileDialog() {
+  function showCreatefileDialog(targetPath) {
+    const pane = state.activePane;
+    const destPath = targetPath || state.panes[pane].currentPath;
     showDialog('ファイルを作成', `
       <label style="display:block;margin-bottom:6px;font-size:12px;color:var(--text-secondary)">ファイル名:</label>
       <input type="text" class="dialog-input" id="dialog-createfile-input" placeholder="新しいファイル">
@@ -756,15 +815,13 @@
       const name = $('#dialog-createfile-input').value.trim();
       const type = $('#dialog-createfile-ext').value.trim();
       if (!name) throw new Error('ファイル名を入力してください');
-      const pane = state.activePane;
-      const p = state.panes[pane];
       await api('/createfile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: p.currentPath, name, type })
+        body: JSON.stringify({ path: destPath, name, type })
       });
       showStatus('ファイルを作成しました');
-      navigateTo(pane, p.currentPath, true);
+      navigateTo(pane, state.panes[pane].currentPath, true);
     });
   }
 
@@ -1001,6 +1058,26 @@
     });
 
     document.addEventListener('click', hideContextMenu);
+
+    // Tree context menu
+    $$('#tree-context-menu .menu-item').forEach(item => {
+      item.addEventListener('click', () => handleTreeContextAction(item.dataset.taction));
+    });
+    document.addEventListener('click', hideTreeContextMenu);
+
+    // Tree refresh buttons
+    $('#tree-refresh-top').addEventListener('click', () => {
+      state.panes.top.treeData = {};
+      state.panes.top.expandedPaths.clear();
+      loadTree('top', '');
+      showStatus('上ツリーを更新しました');
+    });
+    $('#tree-refresh-bottom').addEventListener('click', () => {
+      state.panes.bottom.treeData = {};
+      state.panes.bottom.expandedPaths.clear();
+      loadTree('bottom', '');
+      showStatus('下ツリーを更新しました');
+    });
 
     // Header actions
     $('#btn-upload').addEventListener('click', showUploadDialog);
