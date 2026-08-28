@@ -163,36 +163,7 @@
       }
     });
 
-    // Tree pane vertical resize
-    const treeHandle = document.getElementById('resize-handle-tree');
-    const treeTop = document.getElementById('tree-pane-top');
-    const treeBottom = document.getElementById('tree-pane-bottom');
-    let treeDrag = false;
 
-    treeHandle.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      treeDrag = true;
-      document.body.style.cursor = 'row-resize';
-      document.body.style.userSelect = 'none';
-    });
-
-    document.addEventListener('mousemove', (e) => {
-      if (!treeDrag) return;
-      const rect = sidebar.getBoundingClientRect();
-      const y = e.clientY - rect.top;
-      const h = sidebar.getBoundingClientRect().height;
-      const pct = Math.max(20, Math.min(80, (y / h) * 100));
-      treeTop.style.flex = `0 0 ${pct}%`;
-      treeBottom.style.flex = `0 0 ${100 - pct - 1}%`;
-    });
-
-    document.addEventListener('mouseup', () => {
-      if (treeDrag) {
-        treeDrag = false;
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-      }
-    });
   }
 
   // ── File Icons (flat SVG) ──
@@ -955,6 +926,13 @@
         const pct = (newHeight / totalHeight) * 100;
         paneTop.style.flex = `0 0 ${pct}%`;
         paneBottom.style.flex = `0 0 ${100 - pct - 1}%`;
+        // Sync tree pane split
+        const treeTop = document.getElementById('tree-pane-top');
+        const treeBottom = document.getElementById('tree-pane-bottom');
+        if (treeTop && treeBottom) {
+          treeTop.style.flex = `0 0 ${pct}%`;
+          treeBottom.style.flex = `0 0 ${100 - pct - 1}%`;
+        }
       };
 
       const onMouseUp = () => {
