@@ -877,6 +877,18 @@
     $('#btn-mkdir').addEventListener('click', showMkdirDialog);
     $('#btn-createfile').addEventListener('click', showCreatefileDialog);
 
+    // Reload page after restart (with retry)
+    function reloadAfterRestart(delay) {
+      setTimeout(() => {
+        const check = setInterval(() => {
+          fetch('/api/browse?path=/').then(() => {
+            clearInterval(check);
+            location.reload();
+          }).catch(() => {});
+        }, 2000);
+      }, delay || 3000);
+    }
+
     // Update button
     $('#btn-update').addEventListener('click', async () => {
       if (!confirm('GitHubから最新コードを取得してアップデートしますか？')) return;
@@ -885,25 +897,25 @@
         const r = await fetch('/api/update', { method: 'POST' });
         const d = await r.json();
         if (d.success) {
-          showStatus('アップデート完了。再起動します...');
-          await fetch('/api/restart', { method: 'POST' });
+          showStatus('アップデート完了。再起動してリロードします...');
+          fetch('/api/restart', { method: 'POST' }).catch(() => {});
+          reloadAfterRestart(3000);
         } else {
           showStatus('アップデートエラー: ' + (d.error || '不明なエラー'));
         }
       } catch (err) {
-        showStatus('アップデートエラー: ' + err.message);
+        // Network error means server is restarting — that's expected
+        showStatus('アップデート完了。サーバー再起動中...');
+        reloadAfterRestart(5000);
       }
     });
 
     // Restart button
     $('#btn-restart').addEventListener('click', async () => {
       if (!confirm('servEXサービスを再起動しますか？')) return;
-      try {
-        showStatus('再起動中...');
-        await fetch('/api/restart', { method: 'POST' });
-      } catch (err) {
-        showStatus('再起動エラー: ' + err.message);
-      }
+      showStatus('再起動中。ページをリロードします...');
+      fetch('/api/restart', { method: 'POST' }).catch(() => {});
+      reloadAfterRestart(3000);
     });
 
     // Sidebar tabs

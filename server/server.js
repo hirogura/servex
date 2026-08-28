@@ -514,11 +514,11 @@ wss.on('connection', (ws) => {
 // ── Update (git pull from GitHub) ──
 app.post('/api/update', async (req, res) => {
   try {
-    const installDir = '/opt/servex';
-    // Stash any local changes, pull from origin, then install dependencies
-    await sh('git', ['stash'], { cwd: installDir, timeout: 15000 });
+    const installDir = process.env.SERVEX_DIR || path.join(__dirname, '..');
+    // Stash local changes (ignore failure if nothing to stash)
+    try { await sh('git', ['stash'], { cwd: installDir, timeout: 15000 }); } catch (_) {}
     const pullResult = await sh('git', ['pull', 'origin', 'main'], { cwd: installDir, timeout: 30000 });
-    await sh('npm', ['install', '--production'], { cwd: `${installDir}/server`, timeout: 60000 });
+    await sh('npm', ['install', '--production'], { cwd: path.join(installDir, 'server'), timeout: 60000 });
     res.json({ success: true, message: pullResult.stdout.trim() });
   } catch (e) {
     sendErr(res, e.message, 500);
@@ -528,10 +528,11 @@ app.post('/api/update', async (req, res) => {
 // ── Restart servEX service ──
 app.post('/api/restart', async (req, res) => {
   try {
-    // Respond first, then restart after a short delay
+    // Respond first, then restart after a short delay so the client gets the response
     res.json({ success: true, message: '再起動します...' });
     setTimeout(() => {
-      exec('systemctl restart servex', (err) => {
+      const svc = process.env.SERVEX_SERVICE || 'servex';
+      exec(`systemctl restart ${svc}`, (err) => {
         if (err) console.error('Restart failed:', err.message);
       });
     }, 1000);
