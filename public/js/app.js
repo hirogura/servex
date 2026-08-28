@@ -50,23 +50,28 @@
     elements.statusText.textContent = msg;
   }
 
-  // ── File Icons ──
+  // ── File Icons (flat SVG) ──
+  const SVG_FOLDER = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#89b4fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>';
+  const SVG_FILE = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#a6adc8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+  const SVG_IMAGE = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#a6e3a1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
+  const SVG_VIDEO = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#cba6f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/></svg>';
+  const SVG_MUSIC = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f9e2af" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
+  const SVG_ARCHIVE = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fab387" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>';
+  const SVG_CODE = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#89dceb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
+  const SVG_DOC = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#cdd6f4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>';
+  const SVG_DATA = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f38ba8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>';
+
   function getFileIcon(item) {
-    if (item.isDirectory) return '📁';
+    if (item.isDirectory) return SVG_FOLDER;
     const ext = (item.extension || '').toLowerCase();
-    const icons = {
-      '.jpg': '🖼️', '.jpeg': '🖼️', '.png': '🖼️', '.gif': '🖼️', '.webp': '🖼️', '.bmp': '🖼️', '.svg': '🖼️',
-      '.mp4': '🎬', '.avi': '🎬', '.mkv': '🎬', '.mov': '🎬', '.webm': '🎬',
-      '.mp3': '🎵', '.wav': '🎵', '.flac': '🎵', '.ogg': '🎵', '.m4a': '🎵',
-      '.pdf': '📄', '.doc': '📝', '.docx': '📝', '.odt': '📝',
-      '.xls': '📊', '.xlsx': '📊', '.ods': '📊', '.csv': '📊',
-      '.pptx': '📑', '.ppt': '📑', '.odp': '📑',
-      '.zip': '📦', '.rar': '📦', '.7z': '📦', '.tar': '📦', '.gz': '📦',
-      '.txt': '📝', '.md': '📝', '.log': '📝',
-      '.js': '📜', '.ts': '📜', '.py': '📜', '.java': '📜', '.html': '🌐', '.css': '🎨',
-      '.json': '📋', '.xml': '📋', '.yaml': '📋', '.yml': '📋'
-    };
-    return icons[ext] || '📄';
+    if (['.jpg','.jpeg','.png','.gif','.webp','.bmp','.svg'].includes(ext)) return SVG_IMAGE;
+    if (['.mp4','.avi','.mkv','.mov','.webm'].includes(ext)) return SVG_VIDEO;
+    if (['.mp3','.wav','.flac','.ogg','.m4a'].includes(ext)) return SVG_MUSIC;
+    if (['.zip','.rar','.7z','.tar','.gz'].includes(ext)) return SVG_ARCHIVE;
+    if (['.js','.ts','.py','.java','.html','.css'].includes(ext)) return SVG_CODE;
+    if (['.json','.xml','.yaml','.yml'].includes(ext)) return SVG_DATA;
+    if (['.pdf','.doc','.docx','.odt','.txt','.md','.log'].includes(ext)) return SVG_DOC;
+    return SVG_FILE;
   }
 
   function formatSize(b) {
@@ -123,7 +128,7 @@
     const sorted = sortItems(p.items);
 
     if (!sorted.length) {
-      container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📂</div><p>フォルダは空です</p></div>';
+      container.innerHTML = '<div class="empty-state"><div class="empty-state-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.4"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg></div><p>フォルダは空です</p></div>';
       return;
     }
 
@@ -996,13 +1001,16 @@
           state.activePane = pane;
           updatePaneLabel();
           // Show paste option
+          const svgPaste = '<svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+          const svgMkdir = '<svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>';
+          const svgFile = '<svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>';
           elements.contextMenu.innerHTML = state.clipboard
-            ? `<div class="menu-item" data-action="paste">📋 貼り付け (${state.clipboard.paths.length}件)</div>
+            ? `<div class="menu-item" data-action="paste">${svgPaste} 貼り付け (${state.clipboard.paths.length}件)</div>
                <div class="menu-divider"></div>
-               <div class="menu-item" data-action="mkdir">📁 フォルダ作成</div>
-               <div class="menu-item" data-action="createfile">📄 ファイル作成</div>`
-            : `<div class="menu-item" data-action="mkdir">📁 フォルダ作成</div>
-               <div class="menu-item" data-action="createfile">📄 ファイル作成</div>`;
+               <div class="menu-item" data-action="mkdir">${svgMkdir} フォルダ作成</div>
+               <div class="menu-item" data-action="createfile">${svgFile} ファイル作成</div>`
+            : `<div class="menu-item" data-action="mkdir">${svgMkdir} フォルダ作成</div>
+               <div class="menu-item" data-action="createfile">${svgFile} ファイル作成</div>`;
           elements.contextMenu.querySelectorAll('.menu-item').forEach(item => {
             item.addEventListener('click', () => handleContextAction(item.dataset.action));
           });
