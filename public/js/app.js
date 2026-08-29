@@ -124,6 +124,10 @@
     menu.style.left = e.clientX + 'px';
     menu.style.top = e.clientY + 'px';
     menu.classList.add('show');
+    // Adjust if menu goes off screen
+    const rect = menu.getBoundingClientRect();
+    if (rect.bottom > window.innerHeight) menu.style.top = `${Math.max(0, e.clientY - rect.height)}px`;
+    if (rect.right > window.innerWidth) menu.style.left = `${Math.max(0, e.clientX - rect.width)}px`;
   }
 
   function hideTreeContextMenu() {
@@ -526,9 +530,18 @@
 
   // ── Context Menu ──
   function showContextMenu(x, y) {
-    elements.contextMenu.style.left = `${x}px`;
-    elements.contextMenu.style.top = `${y}px`;
-    elements.contextMenu.classList.add('show');
+    const menu = elements.contextMenu;
+    menu.style.left = `${x}px`;
+    menu.style.top = `${y}px`;
+    menu.classList.add('show');
+    // Adjust if menu goes off bottom
+    const rect = menu.getBoundingClientRect();
+    if (rect.bottom > window.innerHeight) {
+      menu.style.top = `${Math.max(0, y - rect.height)}px`;
+    }
+    if (rect.right > window.innerWidth) {
+      menu.style.left = `${Math.max(0, x - rect.width)}px`;
+    }
   }
 
   function hideContextMenu() {
@@ -947,18 +960,6 @@
     state.terminal.loadAddon(state.terminalFitAddon);
     state.terminal.open(elements.terminalContainer);
 
-    setTimeout(() => {
-      state.terminalFitAddon.fit();
-    }, 100);
-
-    // Fetch current user, then connect
-    api('/user').then(d => {
-      termUser = d.currentUser;
-      connectTerminal(null, null);
-    }).catch(() => {
-      connectTerminal(null, null);
-    });
-
     state.terminal.onData((data) => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ type: 'input', data }));
@@ -970,6 +971,9 @@
         state.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
       }
     });
+
+    // Connect immediately (server detects user automatically)
+    connectTerminal(null, null);
   }
 
   function connectTerminal(cwd, user) {
@@ -1020,9 +1024,12 @@
 
     if (tabName === 'terminal') {
       if (!state.terminal) initTerminal();
-      setTimeout(() => {
-        if (state.terminalFitAddon) state.terminalFitAddon.fit();
-      }, 100);
+      // Delay fit to ensure container has layout dimensions
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          if (state.terminalFitAddon) state.terminalFitAddon.fit();
+        }, 50);
+      });
     }
   }
 

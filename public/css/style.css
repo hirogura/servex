@@ -33,6 +33,7 @@ body{font-family:"Segoe UI Variable","Segoe UI",system-ui,-apple-system,sans-ser
 /* Left Sidebar (Explorer Tree) */
 .left-sidebar{width:220px;background:var(--bg-primary);border-right:1px solid var(--border-color);display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
 .tree-pane{display:flex;flex-direction:column;overflow:hidden;min-height:80px}
+#tree-pane-bottom{border-top:2px solid var(--border-color)}
 .sidebar-header{padding:8px 12px;border-bottom:1px solid var(--border-color);display:flex;align-items:center;justify-content:space-between}
 .sidebar-header h3{font-size:11px;text-transform:uppercase;color:var(--text-tertiary);letter-spacing:.5px;font-weight:600}
 .tree-refresh-btn{background:none;border:none;padding:3px;cursor:pointer;border-radius:var(--radius-sm);color:var(--text-tertiary);display:inline-flex;align-items:center;transition:all .15s}
