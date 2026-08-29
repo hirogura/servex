@@ -920,6 +920,10 @@
   }
 
   // ── Terminal ──
+  let termId = 'p-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+  let termIsRoot = false;
+  let termUser = null;
+
   function initTerminal() {
     if (state.terminal) return;
 
@@ -947,19 +951,34 @@
       state.terminalFitAddon.fit();
     }, 100);
 
-    // Connect WebSocket
-    connectTerminal();
+    // Fetch current user, then connect
+    api('/user').then(d => {
+      termUser = d.currentUser;
+      connectTerminal(null, null);
+    }).catch(() => {
+      connectTerminal(null, null);
+    });
 
     state.terminal.onData((data) => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ type: 'input', data }));
       }
     });
+
+    state.terminal.onResize(({ cols, rows }) => {
+      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        state.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+      }
+    });
   }
 
-  function connectTerminal() {
+  function connectTerminal(cwd, user) {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    state.ws = new WebSocket(`${protocol}//${location.host}/ws/terminal`);
+    const params = new URLSearchParams();
+    params.set('id', termId);
+    if (cwd) params.set('cwd', cwd);
+    if (user) params.set('user', user);
+    state.ws = new WebSocket(`${protocol}//${location.host}/ws/terminal?${params.toString()}`);
 
     state.ws.onopen = () => {
       showStatus('ターミナルに接続しました');
@@ -968,27 +987,22 @@
     state.ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
-        if (msg.type === 'output') {
+        if (msg.type === 'data') {
           state.terminal.write(msg.data);
         } else if (msg.type === 'exit') {
-          state.terminal.write('\r\n[プロセスが終了しました]\r\n');
-        } else if (msg.type === 'connected') {
-          state.terminal.write(msg.message + '\r\n');
+          state.terminal.write('\r\n\x1b[90m[process exited]\x1b[0m\r\n');
         }
       } catch (e) {}
     };
 
     state.ws.onclose = () => {
       if (state.terminal) {
-        state.terminal.write('\r\n[接続が切断されました]\r\n');
+        state.terminal.write('\r\n\x1b[31m[接続が切れました。再接続します…]\x1b[0m\r\n');
+        setTimeout(() => connectTerminal(null, null), 2000);
       }
     };
 
-    state.ws.onerror = () => {
-      if (state.terminal) {
-        state.terminal.write('\r\n[接続エラー]\r\n');
-      }
-    };
+    state.ws.onerror = () => {};
   }
 
   function openTerminalAt(path) {
@@ -1203,17 +1217,16 @@
     });
 
     // Root toggle
-    let terminalIsRoot = false;
     $('#btn-terminal-root').addEventListener('click', () => {
       if (!state.terminal) initTerminal();
       const pane = state.activePane;
       const cwd = state.panes[pane].currentPath;
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-        const targetUser = terminalIsRoot ? null : 'root';
-        state.ws.send(JSON.stringify({ type: 'su', user: targetUser, cwd }));
-        terminalIsRoot = !terminalIsRoot;
-        $('#btn-terminal-root').classList.toggle('root-active', terminalIsRoot);
-        showStatus(terminalIsRoot ? 'rootに切り替えました' : 'ユーザーに戻しました');
+        termIsRoot = !termIsRoot;
+        const targetUser = termIsRoot ? 'root' : termUser;
+        state.ws.send(JSON.stringify({ type: 'user', user: targetUser, cwd }));
+        $('#btn-terminal-root').classList.toggle('root-active', termIsRoot);
+        showStatus(termIsRoot ? 'rootに切り替えました' : `${termUser}に戻しました`);
       }
     });
 

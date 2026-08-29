@@ -466,118 +466,187 @@ app.get('/api/user', async (req, res) => {
 
 // ── WebSocket Terminal ──
 const WebSocket = require('ws');
+const os = require('os');
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server, path: '/ws/terminal' });
 
-wss.on('connection', (ws) => {
-  let ptyProcess;
-  let currentCwd = process.env.HOME || '/root';
+// Detect default non-root user with login shell
+let TERM_USER = null;
+let IS_ROOT = process.getuid && process.getuid() === 0;
+try {
+  const { execSync } = require('child_process');
+  const passwd = execSync('getent passwd', { timeout: 3000 }).toString();
+  const candidates = passwd.split('\n').filter(Boolean)
+    .map(l => l.split(':'))
+    .filter(p => parseInt(p[2]) >= 1000 && parseInt(p[2]) < 65534 && p[6] && (p[6].includes('bash') || p[6].includes('sh')));
+  if (candidates.length > 0) TERM_USER = candidates[0][0];
+} catch (e) {}
+console.log(`[servEX] Default terminal user: ${TERM_USER || 'root'}`);
 
-  // Detect default non-root user
-  let defaultUser = null;
+function userHomeOf(user) {
   try {
     const { execSync } = require('child_process');
-    const passwd = execSync('getent passwd', { timeout: 3000 }).toString();
-    const candidates = passwd.split('\n').filter(Boolean).map(l => l.split(':')).filter(p => parseInt(p[2]) >= 1000 && parseInt(p[2]) < 65534 && p[6] && p[6].includes('bash'));
-    if (candidates.length > 0) defaultUser = candidates[0][0];
-  } catch (e) {}
+    return execSync(`eval echo ~${user}`, { timeout: 2000 }).toString().trim() || '/root';
+  } catch { return '/root'; }
+}
 
-  function spawnShell(user, cwd) {
-    if (ptyProcess) ptyProcess.kill();
-    const nodePty = require('node-pty');
-    const shellCwd = cwd || currentCwd;
-    const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
-    const targetUser = user || defaultUser;
-
-    if (targetUser && targetUser !== 'root') {
-      ptyProcess = nodePty.spawn('su', ['-c', 'bash', targetUser], {
-        name: 'xterm-256color',
-        cols: 80,
-        rows: 24,
-        cwd: shellCwd,
-        env
-      });
-    } else {
-      ptyProcess = nodePty.spawn('bash', [], {
-        name: 'xterm-256color',
-        cols: 80,
-        rows: 24,
-        cwd: shellCwd,
-        env
-      });
-    }
-
-    ptyProcess.onData((data) => {
-      try {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'output', data }));
-        }
-      } catch (e) {}
-    });
-
-    ptyProcess.onExit(({ exitCode }) => {
-      try {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'exit', code: exitCode }));
-        }
-      } catch (e) {}
-      ws.close();
-    });
-  }
-
+function userUidOf(user) {
   try {
-    spawnShell(null, null);
+    const { execSync } = require('child_process');
+    return parseInt(execSync(`id -u ${user}`, { timeout: 2000 }).toString().trim()) || 0;
+  } catch { return 0; }
+}
 
-    ptyProcess.onData((data) => {
-      try {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'output', data }));
-        }
-      } catch (e) {}
-    });
-
-    ptyProcess.onExit(({ exitCode }) => {
-      try {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'exit', code: exitCode }));
-        }
-      } catch (e) {}
-      ws.close();
-    });
-
-    ws.on('message', (msg) => {
-      try {
-        const parsed = JSON.parse(msg.toString());
-        if (parsed.type === 'input') {
-          ptyProcess.write(parsed.data);
-        } else if (parsed.type === 'resize') {
-          ptyProcess.resize(parsed.cols || 80, parsed.rows || 24);
-        } else if (parsed.type === 'cd') {
-          currentCwd = parsed.path || currentCwd;
-          ptyProcess.write(`cd "${parsed.path}" && clear\n`);
-        } else if (parsed.type === 'su') {
-          const user = parsed.user || 'root';
-          currentCwd = parsed.cwd || currentCwd;
-          spawnShell(user, currentCwd);
-          ws.send(JSON.stringify({ type: 'connected', message: `Switched to ${user}` }));
-        }
-      } catch (e) {}
-    });
-
-    ws.on('close', () => {
-      if (ptyProcess) ptyProcess.kill();
-    });
-
-    ws.on('error', () => {
-      if (ptyProcess) ptyProcess.kill();
-    });
-
-    ws.send(JSON.stringify({ type: 'connected', message: 'Terminal connected' }));
-  } catch (e) {
-    console.error('Terminal spawn error:', e.message);
-    ws.send(JSON.stringify({ type: 'error', message: e.message }));
-    ws.close();
+function makeShellEnv(user) {
+  const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
+  if (!env.HOME) env.HOME = os.homedir();
+  if (user && user !== (process.env.USER || 'root')) {
+    const home = userHomeOf(user);
+    const uid = userUidOf(user);
+    env.HOME = home;
+    env.USER = user;
+    env.LOGNAME = user;
+    env.SHELL = '/bin/bash';
+    env.PATH = `${home}/.local/bin:${env.PATH || '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'}`;
+    // XDG / D-Bus for GUI tools
+    const runDir = `/run/user/${uid}`;
+    if (fs.existsSync(runDir)) {
+      env.XDG_RUNTIME_DIR = runDir;
+      if (fs.existsSync(`${runDir}/bus`)) env.DBUS_SESSION_BUS_ADDRESS = `unix:path=${runDir}/bus`;
+    }
   }
+  return env;
+}
+
+// Terminal records: id -> { term, buf, conns, cwd, user }
+const terminals = new Map();
+const TERM_BUF_MAX = 512 * 1024;
+const TERM_WELCOME = '\r\n\x1b[90m— servEX terminal —\x1b[0m\r\n';
+
+function spawnTermProc(rec, dir, user) {
+  const nodePty = require('node-pty');
+  const old = rec.term;
+  const cols = old ? old.cols : 100;
+  const rows = old ? old.rows : 30;
+  if (old) {
+    old._respawn = true;
+    try { old.kill(); } catch {}
+  }
+  const curUser = process.env.USER || 'root';
+  const targetUser = user || curUser;
+  const env = makeShellEnv(targetUser);
+  let bin, args;
+
+  if (IS_ROOT && targetUser && targetUser !== curUser) {
+    // setpriv: job control works correctly (unlike su)
+    bin = 'setpriv';
+    args = ['--reuid=' + targetUser, '--regid=' + targetUser, '--init-groups', '--', 'bash', '-l'];
+  } else {
+    bin = 'bash';
+    args = ['-l'];
+  }
+
+  const child = nodePty.spawn(bin, args, {
+    name: 'xterm-256color',
+    cols, rows,
+    cwd: dir || userHomeOf(targetUser),
+    env
+  });
+  rec.term = child;
+  rec.buf = '';
+  rec.cwd = dir;
+  rec.user = targetUser;
+
+  child.onData((data) => {
+    rec.buf += data;
+    if (rec.buf.length > TERM_BUF_MAX) rec.buf = rec.buf.slice(rec.buf.length - TERM_BUF_MAX);
+    const s = JSON.stringify({ type: 'data', data });
+    for (const c of Array.from(rec.conns)) {
+      if (c.readyState === c.OPEN) try { c.send(s); } catch {}
+    }
+  });
+
+  child.onExit(({ exitCode }) => {
+    if (child._respawn) { child._respawn = false; return; }
+    if (terminals.get(rec.id) === rec && rec.term === child) terminals.delete(rec.id);
+    try { if (child.pid && process.getpgid(child.pid) === child.pid) process.kill(-child.pid, 'SIGHUP'); } catch {}
+    try { child.kill(); } catch {}
+    const s = JSON.stringify({ type: 'exit', code: exitCode });
+    for (const c of Array.from(rec.conns)) {
+      if (c.readyState === c.OPEN) try { c.send(s); } catch {}
+    }
+  });
+
+  return child;
+}
+
+wss.on('connection', (ws, req) => {
+  const q = new URL(req.url || '/', 'http://localhost').searchParams;
+  const id = q.get('id') || ('p-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8));
+  let startDir = ROOT_DIR;
+  try {
+    const c = q.get('cwd');
+    if (c != null && c !== '') {
+      const resolved = path.resolve(ROOT_DIR, c);
+      if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) startDir = resolved;
+    }
+  } catch {}
+  const user = q.get('user') || TERM_USER;
+
+  let rec = terminals.get(id);
+  const fresh = !rec || !rec.term;
+
+  if (fresh) {
+    try {
+      rec = { id, term: null, buf: '', conns: new Set(), cwd: startDir, user: user };
+      terminals.set(id, rec);
+      spawnTermProc(rec, startDir, user);
+    } catch (e) {
+      ws.send(JSON.stringify({ type: 'data', data: '\r\n\x1b[31m[servEX] ' + e.message + '\x1b[0m\r\n' }));
+      try { ws.close(); } catch {}
+      return;
+    }
+  }
+  rec.conns.add(ws);
+
+  // Send welcome or buffer for reconnection
+  ws.send(JSON.stringify({ type: 'data', data: fresh ? TERM_WELCOME : rec.buf }));
+
+  ws.on('message', (raw) => {
+    try {
+      const msg = JSON.parse(String(raw));
+      const t = rec.term;
+      if (!t) return;
+      if (msg.type === 'input') {
+        t.write(msg.data);
+      } else if (msg.type === 'resize') {
+        t.resize(Number(msg.cols) || 80, Number(msg.rows) || 24);
+      } else if (msg.type === 'cd') {
+        const dir = String(msg.path || '');
+        if (dir) rec.cwd = dir;
+        t.write(`cd ${JSON.stringify(dir)} && clear\n`);
+      } else if (msg.type === 'user') {
+        const newUser = String(msg.user || TERM_USER);
+        const newCwd = msg.cwd || rec.cwd || ROOT_DIR;
+        spawnTermProc(rec, newCwd, newUser);
+        rec.conns.add(ws);
+        ws.send(JSON.stringify({ type: 'data', data: '\r\n\x1b[90m— Switched to ' + rec.user + ' —\x1b[0m\r\n' }));
+      } else if (msg.type === 'kill') {
+        try { t.kill(); } catch {}
+        try { if (t.pid && process.getpgid(t.pid) === t.pid) process.kill(-t.pid, 'SIGHUP'); } catch {}
+        terminals.delete(id);
+        try { ws.close(); } catch {}
+      }
+    } catch {}
+  });
+
+  ws.on('close', () => {
+    if (rec) rec.conns.delete(ws);
+  });
+
+  ws.on('error', () => {
+    if (rec) rec.conns.delete(ws);
+  });
 });
 
 // ── Update (git pull from GitHub) ──
