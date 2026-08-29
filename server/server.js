@@ -129,6 +129,64 @@ app.get('/api/tree', async (req, res) => {
   }
 });
 
+// ── Disks / Partitions ──
+app.get('/api/disks', async (req, res) => {
+  try {
+    const result = await sh('lsblk', ['-J', '-o', 'NAME,MODEL,SIZE,TYPE,FSTYPE,MOUNTPOINT,UUID'], { timeout: 10000 });
+    const parsed = JSON.parse(result.stdout);
+    const drives = (parsed.blockdevices || [])
+      .filter(d => d.type === 'disk' && !d.name.startsWith('loop'))
+      .map(d => ({
+        name: d.name,
+        device: '/dev/' + d.name,
+        model: d.model,
+        size: d.size,
+        partitions: (d.children || [])
+          .filter(c => c.type === 'part')
+          .map(c => ({
+            name: c.name,
+            device: '/dev/' + c.name,
+            size: c.size,
+            fstype: c.fstype,
+            mountpoint: c.mountpoint,
+            uuid: c.uuid
+          }))
+      }));
+    res.json({ success: true, drives });
+  } catch (e) {
+    sendErr(res, e.message, e.status || 400);
+  }
+});
+
+// ── Mount partition ──
+app.post('/api/mount', async (req, res) => {
+  try {
+    const device = String(req.body.device || '').trim();
+    const mountpoint = String(req.body.mountpoint || '').trim();
+    if (!device || !mountpoint) return sendErr(res, 'デバイスとマウント先を指定してください');
+    if (!/^\/dev\//.test(device)) return sendErr(res, 'デバイスパスが不正です');
+    if (!mountpoint.startsWith('/')) return sendErr(res, 'マウント先が不正です');
+    await fs.promises.mkdir(mountpoint, { recursive: true });
+    await sh('mount', [device, mountpoint], { timeout: 15000 });
+    res.json({ success: true });
+  } catch (e) {
+    sendErr(res, e.message, e.status || 400);
+  }
+});
+
+// ── Unmount partition ──
+app.post('/api/unmount', async (req, res) => {
+  try {
+    const device = String(req.body.device || '').trim();
+    if (!device) return sendErr(res, 'デバイスを指定してください');
+    if (!/^\/dev\//.test(device)) return sendErr(res, 'デバイスパスが不正です');
+    await sh('umount', [device], { timeout: 15000 });
+    res.json({ success: true });
+  } catch (e) {
+    sendErr(res, e.message, e.status || 400);
+  }
+});
+
 // ── Thumbnail ──
 app.get('/api/thumbnail', (req, res) => {
   try {

@@ -6,8 +6,8 @@
   // ── State ──
   const state = {
     panes: {
-      top: { currentPath: '/', viewMode: 'list', items: [], selectedItem: null, selectedItems: new Set(), expandedPaths: new Set(), treeData: {} },
-      bottom: { currentPath: '/', viewMode: 'list', items: [], selectedItem: null, selectedItems: new Set(), expandedPaths: new Set(), treeData: {} }
+      top: { currentPath: '/', viewMode: 'list', items: [], selectedItem: null, selectedItems: new Set(), expandedPaths: new Set(), treeData: {}, disks: null, diskDrivesExpanded: new Set() },
+      bottom: { currentPath: '/', viewMode: 'list', items: [], selectedItem: null, selectedItems: new Set(), expandedPaths: new Set(), treeData: {}, disks: null, diskDrivesExpanded: new Set() }
     },
     activePane: 'top',
     clipboard: null, // { paths: [], action: 'copy'|'move' }
@@ -72,7 +72,9 @@
     const container = document.getElementById(containerId);
     if (!container) return;
 
-    let html = `<div class="tree-item"><div class="tree-item-content ${p.currentPath === '/' ? 'active' : ''}" data-pane="${pane}" data-path="/" data-has-children="true">
+    let html = renderDiskTree(pane);
+
+    html += `<div class="tree-item"><div class="tree-item-content ${p.currentPath === '/' ? 'active' : ''}" data-pane="${pane}" data-path="/" data-has-children="true">
       <span class="tree-chevron expanded"></span>
       <span class="tree-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#89b4fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0h2"/></svg></span>
       <span>/ (root)</span>
@@ -82,6 +84,125 @@
     html += '</div>';
     container.innerHTML = html;
     attachTreeListeners(pane);
+    attachDiskListeners(pane);
+  }
+
+  // ── Disks / Partitions (Devices section above root) ──
+  const DISK_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f9e2af" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>';
+
+  async function loadDisks(pane) {
+    try {
+      const d = await api('/disks');
+      state.panes[pane].disks = d.drives;
+      renderTree(pane);
+    } catch (e) {
+      console.error('Disks load error:', e);
+      state.panes[pane].disks = null;
+    }
+  }
+
+  function renderDiskTree(pane) {
+    const p = state.panes[pane];
+    if (!p.disks || !p.disks.length) return '';
+    const drivesHtml = p.disks.map(drive => {
+      const expanded = p.diskDrivesExpanded.has(drive.device);
+      const parts = (drive.partitions || []).map(part => {
+        const mounted = !!part.mountpoint;
+        const mnt = mounted ? part.mountpoint : '';
+        return `<div class="tree-item disk-partition">
+          <div class="tree-item-content disk-partition-content ${mnt && p.currentPath === mnt ? 'active' : ''}">
+            <span class="tree-chevron"></span>
+            <span class="tree-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#89dceb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg></span>
+            <span class="disk-part-name" title="${part.device}">${part.name}</span>
+            <span class="disk-part-size">${part.size || ''}</span>
+            ${mounted
+              ? `<span class="disk-mount-link" data-pane="${pane}" data-navigate="${mnt}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>${mnt}</span>`
+              : `<button class="disk-btn mount" data-pane="${pane}" data-mount="${part.device}" data-name="${part.name}">マウント</button>`}
+            ${mounted ? `<button class="disk-btn unmount" data-pane="${pane}" data-unmount="${part.device}" data-name="${part.name}">アンマウント</button>` : ''}
+          </div>
+        </div>`;
+      }).join('');
+      return `<div class="tree-item disk-drive">
+        <div class="tree-item-content disk-drive-content" data-pane="${pane}" data-drive="${drive.device}">
+          <span class="tree-chevron ${expanded ? 'expanded' : ''}"></span>
+          <span class="tree-icon">${DISK_SVG}</span>
+          <span class="disk-drive-name" title="${drive.device}">${drive.name}</span>
+          <span class="disk-drive-meta">${drive.model && drive.model !== '' ? drive.model + ' ・ ' : ''}${drive.size || ''}</span>
+        </div>
+        ${expanded ? `<div class="tree-children">${parts || '<div class="tree-empty-parts">パーティションなし</div>'}</div>` : ''}
+      </div>`;
+    }).join('');
+
+    return `<div class="disk-tree-section">
+      <div class="disk-tree-header"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>デバイス</div>
+      ${drivesHtml}
+    </div>`;
+  }
+
+  function attachDiskListeners(pane) {
+    const containerId = pane === 'top' ? 'tree-container-top' : 'tree-container-bottom';
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    container.querySelectorAll('.disk-drive-content[data-drive]').forEach(el => {
+      el.addEventListener('click', () => {
+        const drive = el.dataset.drive;
+        const p = state.panes[pane];
+        if (p.diskDrivesExpanded.has(drive)) p.diskDrivesExpanded.delete(drive);
+        else p.diskDrivesExpanded.add(drive);
+        renderTree(pane);
+      });
+    });
+
+    container.querySelectorAll('.disk-mount-link[data-navigate]').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const path = el.dataset.navigate;
+        state.panes[pane].currentPath = path;
+        navigateTo(pane, path, true);
+      });
+    });
+
+    container.querySelectorAll('.disk-btn.mount[data-mount]').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        showMountDialog(pane, el.dataset.mount, el.dataset.name);
+      });
+    });
+
+    container.querySelectorAll('.disk-btn.unmount[data-unmount]').forEach(el => {
+      el.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const device = el.dataset.unmount;
+        const name = el.dataset.name;
+        if (!confirm(`「${name}」(${device}) をアンマウントしますか？`)) return;
+        try {
+          showStatus(`アンマウント中...`);
+          await api('/unmount', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device }) });
+          showStatus(`「${name}」をアンマウントしました`);
+          await loadDisks(pane);
+        } catch (err) {
+          showStatus(`アンマウントエラー: ${err.message}`);
+        }
+      });
+    });
+  }
+
+  function showMountDialog(pane, device, name) {
+    const suggested = `/mnt/${name}`;
+    showDialog(`「${name}」をマウント`, `
+      <label style="display:block;margin-bottom:6px;font-size:12px;color:var(--text-secondary)">デバイス:</label>
+      <input type="text" class="dialog-input" value="${device}" readonly>
+      <label style="display:block;margin-top:10px;margin-bottom:6px;font-size:12px;color:var(--text-secondary)">マウント先（フルパス）:</label>
+      <input type="text" class="dialog-input" id="dialog-mount-point" value="${suggested}" placeholder="/mnt/xxx">
+    `, async () => {
+      const mountpoint = $('#dialog-mount-point').value.trim();
+      if (!mountpoint) throw new Error('マウント先を入力してください');
+      showStatus(`マウント中...`);
+      await api('/mount', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device, mountpoint }) });
+      showStatus(`「${name}」を ${mountpoint} にマウントしました`);
+      await loadDisks(pane);
+    });
   }
 
   function renderTreeLevel(pane, items, depth) {
@@ -103,7 +224,7 @@
     const containerId = pane === 'top' ? 'tree-container-top' : 'tree-container-bottom';
     const container = document.getElementById(containerId);
     if (!container) return;
-    container.querySelectorAll('.tree-item-content').forEach(el => {
+    container.querySelectorAll('.tree-item-content[data-path]').forEach(el => {
       el.addEventListener('click', handleTreeClick);
       el.addEventListener('contextmenu', handleTreeContextMenu);
     });
@@ -1165,12 +1286,14 @@
       state.panes.top.treeData = {};
       state.panes.top.expandedPaths.clear();
       loadTree('top', '');
+      loadDisks('top');
       showStatus('上ツリーを更新しました');
     });
     $('#tree-refresh-bottom').addEventListener('click', () => {
       state.panes.bottom.treeData = {};
       state.panes.bottom.expandedPaths.clear();
       loadTree('bottom', '');
+      loadDisks('bottom');
       showStatus('下ツリーを更新しました');
     });
 
@@ -1370,6 +1493,8 @@
     initEventListeners();
     loadTree('top', '');
     loadTree('bottom', '');
+    loadDisks('top');
+    loadDisks('bottom');
     navigateTo('top', '/');
     navigateTo('bottom', '/');
     updatePaneLabel();
