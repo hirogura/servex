@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  servEX v.0.6.2 セットアップスクリプト
+#  servEX v.0.8.1 セットアップスクリプト
 #  - Ubuntu Serve のファイル操作をブラウザから行う
 #  - Tailscale Serve で Tailnet 内のみに 3359 番ポートで公開
 # =============================================================================
@@ -54,8 +54,14 @@ if [ "$NODE_VERSION" -lt "$NODE_MIN_VERSION" ]; then
   warn "Node.js v${NODE_VERSION} は古いです (必要: v${NODE_MIN_VERSION}以上)"
   install_nodejs
 fi
-command -v npm >/dev/null 2>&1 || die "npm が見つかりません"
-ok "前提 OK (Node.js v$(node -v))"
+if ! command -v npm >/dev/null 2>&1; then
+  warn "npm が見つかりません。Node.js を (再)インストールして npm を導入します..."
+  install_nodejs
+  if ! command -v npm >/dev/null 2>&1; then
+    die "npm が見つかりません。インストールに失敗しました"
+  fi
+fi
+ok "前提 OK (Node.js v$(node -v), npm v$(npm -v))"
 
 # ── ディレクトリ作成 ──
 info "ディレクトリ作成..."
@@ -164,7 +170,7 @@ fi
 # ── 完了サマリー ──
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-ok "servEX v.0.6.2 セットアップ完了！"
+ok "servEX v.0.8.1 セットアップ完了！"
 echo ""
 if [ -n "${TS_HOSTNAME}" ]; then
   echo "  servEX      : https://${TS_HOSTNAME}:${PORT}"
