@@ -364,6 +364,11 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script>
+    if (!window.Terminal) console.error('[servEX] xterm.js failed to load - window.Terminal is undefined');
+    else console.log('[servEX] xterm.js loaded, Terminal:', typeof window.Terminal);
+    if (!window.FitAddon) console.error('[servEX] addon-fit failed to load');
+  </script>
   <script src="js/app.js"></script>
 </body>
 </html>
