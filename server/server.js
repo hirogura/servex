@@ -447,6 +447,23 @@ app.get('/api/groups', async (req, res) => {
   }
 });
 
+// ── Current user info ──
+app.get('/api/user', async (req, res) => {
+  try {
+    const whoami = await sh('whoami', [], { timeout: 5000 });
+    const currentUser = whoami.stdout.trim();
+    // Get users with login shells
+    const passwd = await sh('getent', ['passwd'], { timeout: 5000 });
+    const users = passwd.stdout.split('\n').filter(Boolean).map(line => {
+      const parts = line.split(':');
+      return { name: parts[0], uid: parseInt(parts[2]) };
+    }).filter(u => u.uid >= 0 && u.uid < 65534 && u.name !== 'nobody');
+    res.json({ success: true, currentUser, users });
+  } catch (e) {
+    res.json({ success: true, currentUser: 'root', users: [{ name: 'root', uid: 0 }] });
+  }
+});
+
 // ── WebSocket Terminal ──
 const WebSocket = require('ws');
 const server = http.createServer(app);
@@ -454,15 +471,62 @@ const wss = new WebSocket.Server({ server, path: '/ws/terminal' });
 
 wss.on('connection', (ws) => {
   let ptyProcess;
+  let currentCwd = process.env.HOME || '/root';
+
+  // Detect default non-root user
+  let defaultUser = null;
   try {
+    const { execSync } = require('child_process');
+    const passwd = execSync('getent passwd', { timeout: 3000 }).toString();
+    const candidates = passwd.split('\n').filter(Boolean).map(l => l.split(':')).filter(p => parseInt(p[2]) >= 1000 && parseInt(p[2]) < 65534 && p[6] && p[6].includes('bash'));
+    if (candidates.length > 0) defaultUser = candidates[0][0];
+  } catch (e) {}
+
+  function spawnShell(user, cwd) {
+    if (ptyProcess) ptyProcess.kill();
     const nodePty = require('node-pty');
-    ptyProcess = nodePty.spawn('bash', [], {
-      name: 'xterm-256color',
-      cols: 80,
-      rows: 24,
-      cwd: process.env.HOME || '/root',
-      env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' }
+    const shellCwd = cwd || currentCwd;
+    const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
+    const targetUser = user || defaultUser;
+
+    if (targetUser && targetUser !== 'root') {
+      ptyProcess = nodePty.spawn('su', ['-c', 'bash', targetUser], {
+        name: 'xterm-256color',
+        cols: 80,
+        rows: 24,
+        cwd: shellCwd,
+        env
+      });
+    } else {
+      ptyProcess = nodePty.spawn('bash', [], {
+        name: 'xterm-256color',
+        cols: 80,
+        rows: 24,
+        cwd: shellCwd,
+        env
+      });
+    }
+
+    ptyProcess.onData((data) => {
+      try {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'output', data }));
+        }
+      } catch (e) {}
     });
+
+    ptyProcess.onExit(({ exitCode }) => {
+      try {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'exit', code: exitCode }));
+        }
+      } catch (e) {}
+      ws.close();
+    });
+  }
+
+  try {
+    spawnShell(null, null);
 
     ptyProcess.onData((data) => {
       try {
@@ -489,8 +553,13 @@ wss.on('connection', (ws) => {
         } else if (parsed.type === 'resize') {
           ptyProcess.resize(parsed.cols || 80, parsed.rows || 24);
         } else if (parsed.type === 'cd') {
-          // Send cd command to terminal
+          currentCwd = parsed.path || currentCwd;
           ptyProcess.write(`cd "${parsed.path}" && clear\n`);
+        } else if (parsed.type === 'su') {
+          const user = parsed.user || 'root';
+          currentCwd = parsed.cwd || currentCwd;
+          spawnShell(user, currentCwd);
+          ws.send(JSON.stringify({ type: 'connected', message: `Switched to ${user}` }));
         }
       } catch (e) {}
     });

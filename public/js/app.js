@@ -1202,6 +1202,21 @@
       if (state.terminal) state.terminal.clear();
     });
 
+    // Root toggle
+    let terminalIsRoot = false;
+    $('#btn-terminal-root').addEventListener('click', () => {
+      if (!state.terminal) initTerminal();
+      const pane = state.activePane;
+      const cwd = state.panes[pane].currentPath;
+      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        const targetUser = terminalIsRoot ? null : 'root';
+        state.ws.send(JSON.stringify({ type: 'su', user: targetUser, cwd }));
+        terminalIsRoot = !terminalIsRoot;
+        $('#btn-terminal-root').classList.toggle('root-active', terminalIsRoot);
+        showStatus(terminalIsRoot ? 'rootに切り替えました' : 'ユーザーに戻しました');
+      }
+    });
+
     // Dialog close on overlay click
     elements.dialogOverlay.addEventListener('click', (e) => {
       if (e.target === elements.dialogOverlay) {
