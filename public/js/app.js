@@ -942,38 +942,51 @@
 
     const Terminal = window.Terminal;
     const FitAddon = window.FitAddon;
+    if (!Terminal || !FitAddon) {
+      console.error('[servEX] xterm.js not loaded');
+      return;
+    }
 
-    state.terminal = new Terminal({
-      theme: {
-        background: '#0d1117',
-        foreground: '#c9d1d9',
-        cursor: '#c9d1d9',
-        selectionBackground: '#264f78'
-      },
-      fontFamily: "'Cascadia Code','Fira Code',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace",
-      fontSize: 13,
-      lineHeight: 1.2,
-      cursorBlink: true
-    });
+    try {
+      state.terminal = new Terminal({
+        theme: {
+          background: '#0d1117',
+          foreground: '#c9d1d9',
+          cursor: '#c9d1d9',
+          selectionBackground: '#264f78'
+        },
+        fontFamily: "'Cascadia Code','Fira Code',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace",
+        fontSize: 13,
+        lineHeight: 1.2,
+        cursorBlink: true
+      });
 
-    state.terminalFitAddon = new FitAddon.FitAddon();
-    state.terminal.loadAddon(state.terminalFitAddon);
-    state.terminal.open(elements.terminalContainer);
+      state.terminalFitAddon = new FitAddon.FitAddon();
+      state.terminal.loadAddon(state.terminalFitAddon);
+      state.terminal.open(elements.terminalContainer);
 
-    state.terminal.onData((data) => {
-      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-        state.ws.send(JSON.stringify({ type: 'input', data }));
-      }
-    });
+      // Fit after DOM layout settles
+      setTimeout(() => {
+        try { state.terminalFitAddon.fit(); } catch (e) { console.error('fit error:', e); }
+      }, 200);
 
-    state.terminal.onResize(({ cols, rows }) => {
-      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-        state.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
-      }
-    });
+      state.terminal.onData((data) => {
+        if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+          state.ws.send(JSON.stringify({ type: 'input', data }));
+        }
+      });
 
-    // Connect immediately (server detects user automatically)
-    connectTerminal(null, null);
+      state.terminal.onResize(({ cols, rows }) => {
+        if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+          state.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+        }
+      });
+
+      // Connect immediately (server detects user automatically)
+      connectTerminal(null, null);
+    } catch (e) {
+      console.error('[servEX] Terminal init error:', e);
+    }
   }
 
   function connectTerminal(cwd, user) {
@@ -982,9 +995,12 @@
     params.set('id', termId);
     if (cwd) params.set('cwd', cwd);
     if (user) params.set('user', user);
-    state.ws = new WebSocket(`${protocol}//${location.host}/ws/terminal?${params.toString()}`);
+    const url = `${protocol}//${location.host}/ws/terminal?${params.toString()}`;
+    console.log('[servEX] Connecting terminal to:', url);
+    state.ws = new WebSocket(url);
 
     state.ws.onopen = () => {
+      console.log('[servEX] Terminal WebSocket connected');
       showStatus('ターミナルに接続しました');
     };
 
@@ -1006,7 +1022,7 @@
       }
     };
 
-    state.ws.onerror = () => {};
+    state.ws.onerror = (e) => { console.error('[servEX] Terminal WebSocket error:', e); };
   }
 
   function openTerminalAt(path) {
