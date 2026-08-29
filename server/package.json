@@ -1,6 +1,6 @@
 {
   "name": "servex",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "private": true,
   "description": "servEX - Ubuntu Serve file manager with dual pane and terminal",
   "main": "server.js",
