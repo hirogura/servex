@@ -311,13 +311,13 @@
       return;
     }
 
-    container.className = `file-list ${p.viewMode === 'thumbnail' ? 'thumbnail-view' : ''}`;
+    container.className = `file-list ${p.viewMode === 'thumb' ? 'thumbnail-view' : ''}`;
     container.innerHTML = sorted.map(item => {
       const sel = p.selectedItem && p.selectedItem.path === item.path;
       const msel = p.selectedItems.has(item.path);
       const icon = getFileIcon(item);
 
-      if (p.viewMode === 'thumbnail') {
+      if (p.viewMode === 'thumb') {
         return `<div class="file-item ${sel ? 'selected' : msel ? 'multi-selected' : ''}" 
                      data-path="${item.path}" data-is-directory="${item.isDirectory}" 
                      data-pane="${pane}" data-drop-target="true" draggable="true">
