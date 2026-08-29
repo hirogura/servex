@@ -23,7 +23,7 @@
 ### セットアップ
 
 ```bash
-git clone https://github.com/hirogura/servex.git
+sudo git clone https://github.com/hirogura/servex.git
 cd servex
 sudo bash install-servex.sh
 ```
