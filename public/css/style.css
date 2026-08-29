@@ -188,6 +188,19 @@ body{font-family:"Segoe UI Variable","Segoe UI",system-ui,-apple-system,sans-ser
 
 /* Status Bar */
 .status-bar{display:flex;align-items:center;justify-content:space-between;padding:3px 12px;background:var(--bg-primary);border-top:1px solid var(--border-color);font-size:11px;color:var(--text-secondary)}
+.status-left{display:flex;align-items:center;gap:10px;min-width:0;flex:1}
+#status-text{white-space:nowrap;flex-shrink:0}
+#status-info{white-space:nowrap;margin-left:12px}
+
+/* Copy Progress (bottom left, next to status text) */
+.copy-jobs{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-start;min-width:0;flex:1}
+.copy-job{display:flex;align-items:center;gap:8px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:var(--radius);padding:4px 8px;min-width:260px;max-width:380px}
+.copy-job-label{font-size:11px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px}
+.copy-job-progress{flex:1;height:6px;background:var(--bg-hover);border-radius:3px;overflow:hidden;min-width:60px}
+.copy-job-bar{height:100%;width:0%;background:var(--accent-color);transition:width .3s ease}
+.copy-job-info{font-size:10px;color:var(--text-secondary);white-space:nowrap;min-width:64px;text-align:right}
+.copy-job-cancel{font-size:11px;padding:2px 8px;border:1px solid var(--danger-color);border-radius:var(--radius-sm);background:transparent;color:var(--danger-color);cursor:pointer;white-space:nowrap;transition:all .15s}
+.copy-job-cancel:hover{background:var(--danger-color);color:var(--bg-primary)}
 
 /* Scrollbar */
 ::-webkit-scrollbar{width:6px;height:6px}

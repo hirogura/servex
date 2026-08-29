@@ -11,6 +11,7 @@
     },
     activePane: 'top',
     clipboard: null, // { paths: [], action: 'copy'|'move' }
+    copyJobs: {}, // id -> { el, pane }
     terminal: null,
     terminalFitAddon: null,
     ws: null
@@ -348,6 +349,41 @@
 
   }
 
+  function initTreeSplitResize() {
+    const handle = document.getElementById('tree-split-handle');
+    const treeTop = document.getElementById('tree-pane-top');
+    const treeBottom = document.getElementById('tree-pane-bottom');
+    if (!handle || !treeTop || !treeBottom) return;
+    let dragging = false;
+    let startY = 0;
+    let startHeight = 0;
+
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      dragging = true;
+      startY = e.clientY;
+      startHeight = treeTop.getBoundingClientRect().height;
+      document.body.style.cursor = 'row-resize';
+      document.body.style.userSelect = 'none';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const totalHeight = treeTop.getBoundingClientRect().height + treeBottom.getBoundingClientRect().height;
+      const newHeight = Math.max(80, Math.min(totalHeight - 80, startHeight + (e.clientY - startY)));
+      treeTop.style.flex = `0 0 ${newHeight}px`;
+      treeBottom.style.flex = '1 1 0';
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (dragging) {
+        dragging = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    });
+  }
+
   // ── File Icons (flat SVG) ──
   const SVG_FOLDER = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#89b4fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>';
   const SVG_FILE = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#a6adc8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
@@ -624,29 +660,143 @@
     if (!sourcePaths || !destPath) return;
     hideDdDialog();
 
-    const isMove = action === 'move';
-    const apiPath = isMove
-      ? (sourcePaths.length === 1 ? '/move' : '/move-batch')
-      : (sourcePaths.length === 1 ? '/copy' : '/copy-batch');
+    if (action === 'copy') {
+      startCopyJob(sourcePaths, destPath, state.activePane);
+      return;
+    }
+
+    const apiPath = sourcePaths.length === 1 ? '/move' : '/move-batch';
     const body = sourcePaths.length === 1
       ? { sourcePath: sourcePaths[0], destPath }
       : { paths: sourcePaths, destPath };
 
     try {
-      showStatus(`${isMove ? '移動' : 'コピー'}中...`);
+      showStatus(`${sourcePaths.length}件を移動中...`);
       await api(apiPath, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
-      showStatus(`${sourcePaths.length}件を${isMove ? '移動' : 'コピー'}しました`);
+      showStatus(`${sourcePaths.length}件を移動しました`);
       // Refresh both panes that might be affected
       ['top', 'bottom'].forEach(pane => {
         navigateTo(pane, state.panes[pane].currentPath, true);
       });
     } catch (err) {
-      showStatus(`${isMove ? '移動' : 'コピー'}エラー: ${err.message}`);
+      showStatus(`移動エラー: ${err.message}`);
     }
+  }
+
+  // ── Copy job with progress & cancel ──
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
+
+  function refreshPanes() {
+    ['top', 'bottom'].forEach(pane => navigateTo(pane, state.panes[pane].currentPath, true));
+  }
+
+  function startCopyJob(paths, destPath, pane) {
+    const isSingle = paths.length === 1;
+    const apiPath = isSingle ? '/copy' : '/copy-batch';
+    const body = isSingle ? { sourcePath: paths[0], destPath } : { paths, destPath };
+
+    showStatus('コピー中...');
+    api(apiPath, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(d => {
+      const job = d.job || {};
+      const id = job.id || ('c-' + Date.now());
+      const label = job.label || (isSingle ? paths[0].split('/').pop() : paths.length + '件');
+      showStatus('コピー中...');
+
+      const container = document.getElementById('copy-jobs');
+      const el = document.createElement('div');
+      el.className = 'copy-job';
+      el.dataset.job = id;
+      el.innerHTML = `
+        <div class="copy-job-label" title="${escapeHtml(label)}">コピー中: ${escapeHtml(label)}</div>
+        <div class="copy-job-progress"><div class="copy-job-bar"></div></div>
+        <div class="copy-job-info">0%</div>
+        <button class="copy-job-cancel">キャンセル</button>`;
+      container.appendChild(el);
+      el.querySelector('.copy-job-cancel').addEventListener('click', () => cancelCopyJob(id));
+      state.copyJobs[id] = { el, pane };
+      pollCopyJob(id);
+    }).catch(err => {
+      showStatus(`コピーエラー: ${err.message}`);
+    });
+  }
+
+  function removeCopyJob(id) {
+    const job = state.copyJobs[id];
+    if (!job) return;
+    if (job.el && job.el.parentNode) job.el.parentNode.removeChild(job.el);
+    delete state.copyJobs[id];
+  }
+
+  async function cancelCopyJob(id) {
+    try {
+      await api('/copy-cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job: id })
+      });
+      // The poll loop will pick up the 'cancelled' status and clean up.
+    } catch (e) {
+      removeCopyJob(id);
+    }
+  }
+
+  function pollCopyJob(id) {
+    const job = state.copyJobs[id];
+    if (!job) return;
+    const el = job.el;
+    const bar = el.querySelector('.copy-job-bar');
+    const info = el.querySelector('.copy-job-info');
+
+    setTimeout(async () => {
+      if (!state.copyJobs[id]) return;
+      let d;
+      try {
+        d = await api(`/copy-progress?job=${encodeURIComponent(id)}`);
+      } catch (e) {
+        removeCopyJob(id);
+        showStatus(`コピーエラー: ${e.message}`);
+        return;
+      }
+      const pr = d.progress;
+      const total = pr.total || 0;
+      const done = pr.done || 0;
+      const pct = total > 0 ? Math.min(100, Math.round(done / total * 100)) : (pr.status === 'done' ? 100 : 0);
+      bar.style.width = pct + '%';
+      if (total > 0) {
+        info.textContent = `${pct}% (${formatSize(done)} / ${formatSize(total)})`;
+      } else {
+        info.textContent = `${pr.doneFiles} / ${pr.files} ファイル`;
+      }
+
+      if (pr.status === 'running') {
+        pollCopyJob(id);
+        return;
+      }
+
+      const label = pr.label || '';
+      removeCopyJob(id);
+      if (pr.status === 'done') {
+        showStatus(label ? `${label}をコピーしました` : 'コピーしました');
+        refreshPanes();
+      } else if (pr.status === 'cancelled') {
+        showStatus('コピーをキャンセルしました');
+        refreshPanes();
+      } else {
+        showStatus(`コピーエラー: ${pr.error || '不明なエラー'}`);
+      }
+    }, 350);
   }
 
   // ── Context Menu ──
@@ -776,25 +926,28 @@
           break;
         }
         const destPath = p.currentPath;
+        const paths = state.clipboard.paths;
+        if (state.clipboard.action === 'copy') {
+          startCopyJob(paths, destPath, pane);
+          break;
+        }
         try {
-          showStatus(`${state.clipboard.paths.length}件を${state.clipboard.action === 'copy' ? 'コピー' : '移動'}中...`);
-          if (state.clipboard.paths.length === 1) {
-            const apiPath = state.clipboard.action === 'copy' ? '/copy' : '/move';
-            await api(apiPath, {
+          showStatus(`${paths.length}件を移動中...`);
+          if (paths.length === 1) {
+            await api('/move', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ sourcePath: state.clipboard.paths[0], destPath })
+              body: JSON.stringify({ sourcePath: paths[0], destPath })
             });
           } else {
-            const apiPath = state.clipboard.action === 'copy' ? '/copy-batch' : '/move-batch';
-            await api(apiPath, {
+            await api('/move-batch', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ paths: state.clipboard.paths, destPath })
+              body: JSON.stringify({ paths, destPath })
             });
           }
-          showStatus(`${state.clipboard.paths.length}件を${state.clipboard.action === 'copy' ? 'コピー' : '移動'}しました`);
-          if (state.clipboard.action === 'move') state.clipboard = null;
+          showStatus(`${paths.length}件を移動しました`);
+          state.clipboard = null;
           navigateTo(pane, p.currentPath, true);
         } catch (err) {
           showStatus(`エラー: ${err.message}`);
@@ -1191,13 +1344,6 @@
         const pct = (newHeight / totalHeight) * 100;
         paneTop.style.flex = `0 0 ${pct}%`;
         paneBottom.style.flex = `0 0 ${100 - pct - 1}%`;
-        // Sync tree pane split
-        const treeTop = document.getElementById('tree-pane-top');
-        const treeBottom = document.getElementById('tree-pane-bottom');
-        if (treeTop && treeBottom) {
-          treeTop.style.flex = `0 0 ${pct}%`;
-          treeBottom.style.flex = `0 0 ${100 - pct - 1}%`;
-        }
       };
 
       const onMouseUp = () => {
@@ -1490,6 +1636,7 @@
   function init() {
     initResize();
     initLeftSidebarResize();
+    initTreeSplitResize();
     initEventListeners();
     loadTree('top', '');
     loadTree('bottom', '');

@@ -269,7 +269,115 @@ app.post('/api/move', (req, res) => {
   }
 });
 
-// ── Copy ──
+// ── Copy with progress & cancel ──
+class CopyCancelledError extends Error {}
+
+const COPY_JOBS = new Map();
+let COPY_JOB_SEQ = 0;
+
+function computeTotalSize(abs) {
+  const st = fs.statSync(abs);
+  if (st.isFile()) return { bytes: st.size, files: 1 };
+  let bytes = 0, files = 0;
+  const walk = (dir) => {
+    let ents;
+    try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+    for (const ent of ents) {
+      const full = path.join(dir, ent.name);
+      try {
+        const s = fs.statSync(full);
+        if (ent.isDirectory()) walk(full);
+        else if (ent.isFile()) { bytes += s.size; files++; }
+      } catch (e) {}
+    }
+  };
+  walk(abs);
+  return { bytes, files };
+}
+
+function copyFileWithProgress(src, dest, job) {
+  return new Promise((resolve, reject) => {
+    const inp = fs.createReadStream(src);
+    const out = fs.createWriteStream(dest);
+    inp.on('data', (chunk) => {
+      if (job.cancelled) {
+        inp.destroy(new CopyCancelledError());
+        return;
+      }
+      job.done += chunk.length;
+    });
+    inp.on('error', (e) => { try { out.destroy(); } catch (_) {} reject(e); });
+    out.on('error', (e) => { try { inp.destroy(); } catch (_) {} reject(e); });
+    out.on('finish', () => { job.doneFiles++; resolve(); });
+    inp.pipe(out);
+  });
+}
+
+async function copyWithProgress(src, dest, job) {
+  if (job.cancelled) throw new CopyCancelledError();
+  const st = fs.statSync(src);
+  if (st.isFile()) {
+    await copyFileWithProgress(src, dest, job);
+    return;
+  }
+  await fs.promises.mkdir(dest, { recursive: true });
+  const ents = await fs.promises.readdir(src, { withFileTypes: true });
+  for (const ent of ents) {
+    if (job.cancelled) throw new CopyCancelledError();
+    const s = path.join(src, ent.name);
+    const d = path.join(dest, ent.name);
+    if (ent.isDirectory()) await copyWithProgress(s, d, job);
+    else if (ent.isFile()) await copyFileWithProgress(s, d, job);
+  }
+}
+
+function createCopyJob(srcs, destDir) {
+  const id = 'c' + (++COPY_JOB_SEQ) + '-' + Date.now().toString(36);
+  let bytes = 0, files = 0;
+  const dests = [];
+  for (const src of srcs) {
+    const t = computeTotalSize(src);
+    bytes += t.bytes;
+    files += t.files;
+    dests.push(path.join(destDir, path.basename(src)));
+  }
+  const job = {
+    id,
+    label: srcs.length === 1 ? path.basename(srcs[0]) : `${srcs.length}件`,
+    total: bytes,
+    done: 0,
+    files,
+    doneFiles: 0,
+    status: 'running',
+    error: null,
+    cancelled: false,
+    srcs,
+    dests
+  };
+  COPY_JOBS.set(id, job);
+  return job;
+}
+
+async function runCopyJob(job, srcs, destDir) {
+  try {
+    for (let i = 0; i < srcs.length; i++) {
+      if (job.cancelled) throw new CopyCancelledError();
+      await copyWithProgress(srcs[i], job.dests[i], job);
+    }
+    job.status = 'done';
+  } catch (e) {
+    job.status = e instanceof CopyCancelledError ? 'cancelled' : 'error';
+    job.error = e.message || String(e);
+    if (job.status === 'cancelled') {
+      for (const d of job.dests) {
+        try { if (fs.existsSync(d)) fs.rmSync(d, { recursive: true, force: true }); } catch (_) {}
+      }
+    }
+  } finally {
+    setTimeout(() => COPY_JOBS.delete(job.id), 60000);
+  }
+}
+
 app.post('/api/copy', (req, res) => {
   try {
     const src = safeResolve(req.body.sourcePath);
@@ -278,11 +386,29 @@ app.post('/api/copy', (req, res) => {
     const dest = path.join(destDir, path.basename(src));
     if (src === dest) return sendErr(res, '同じパスです');
     if (exists(dest)) return sendErr(res, '同じ名前のファイルが既に存在します');
-    fs.cpSync(src, dest, { recursive: true });
-    res.json({ success: true });
+    const job = createCopyJob([src], destDir);
+    runCopyJob(job, [src], destDir);
+    res.json({ success: true, job: { id: job.id, label: job.label, total: job.total, files: job.files } });
   } catch (e) {
     sendErr(res, e.message, e.status || 400);
   }
+});
+
+app.get('/api/copy-progress', (req, res) => {
+  const job = COPY_JOBS.get(String(req.query.job || ''));
+  if (!job) return sendErr(res, 'ジョブが見つかりません', 404);
+  res.json({ success: true, progress: {
+    id: job.id, label: job.label, total: job.total, done: job.done,
+    files: job.files, doneFiles: job.doneFiles, status: job.status, error: job.error
+  }});
+});
+
+app.post('/api/copy-cancel', (req, res) => {
+  const job = COPY_JOBS.get(String(req.body.job || ''));
+  if (!job) return sendErr(res, 'ジョブが見つかりません', 404);
+  job.cancelled = true;
+  if (job.status !== 'running') job.status = 'cancelled';
+  res.json({ success: true });
 });
 
 // ── Batch Move ──
@@ -311,20 +437,19 @@ app.post('/api/copy-batch', (req, res) => {
   const paths = Array.isArray(req.body.paths) ? req.body.paths : [];
   let destDir;
   try { destDir = safeResolve(req.body.destPath); } catch (e) { return sendErr(res, e.message); }
-  const errors = [];
-  let copied = 0;
+  const srcs = [];
   for (const p of paths) {
     try {
       const src = safeResolve(p);
       const dest = path.join(destDir, path.basename(src));
       if (src === dest) continue;
-      fs.cpSync(src, dest, { recursive: true });
-      copied++;
-    } catch (e) {
-      errors.push({ path: p, error: e.message });
-    }
+      srcs.push(src);
+    } catch (e) {}
   }
-  res.json({ success: true, copied, errors });
+  if (!srcs.length) return sendErr(res, 'コピーする項目がありません');
+  const job = createCopyJob(srcs, destDir);
+  runCopyJob(job, srcs, destDir);
+  res.json({ success: true, job: { id: job.id, label: job.label, total: job.total, files: job.files } });
 });
 
 // ── Delete ──
