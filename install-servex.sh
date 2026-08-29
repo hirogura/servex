@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  servEX v1.0 セットアップスクリプト
+#  servEX v.0.6.1 セットアップスクリプト
 #  - Ubuntu Serve のファイル操作をブラウザから行う
 #  - Tailscale Serve で Tailnet 内のみに 3359 番ポートで公開
 # =============================================================================
@@ -61,6 +61,19 @@ ok "前提 OK (Node.js v$(node -v))"
 info "ディレクトリ作成..."
 mkdir -p "${INSTALL_DIR}"
 ok "ディレクトリ作成完了"
+
+# ── rsync 確認・インストール ──
+if ! command -v rsync >/dev/null 2>&1; then
+  warn "rsync が見つかりません。インストールします..."
+  if [ -f /etc/debian_version ]; then
+    apt-get install -y -qq rsync
+  elif [ -f /etc/redhat-release ]; then
+    yum install -y rsync
+  else
+    die "rsync を自動インストールできませんでした。手動でインストールしてください"
+  fi
+  ok "rsync インストール完了"
+fi
 
 # ── ファイルコピー ──
 info "ファイルをコピー中..."
@@ -147,7 +160,7 @@ fi
 # ── 完了サマリー ──
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-ok "servEX v1.0 セットアップ完了！"
+ok "servEX v.0.6.1 セットアップ完了！"
 echo ""
 if [ -n "${TS_HOSTNAME}" ]; then
   echo "  servEX      : https://${TS_HOSTNAME}:${PORT}"
