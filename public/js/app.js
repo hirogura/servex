@@ -1623,6 +1623,115 @@
           showContextMenu(e.clientX, e.clientY);
         }
       });
+
+      // Rubber-band (drag) multi-selection
+      const rectEl = wrapper.querySelector('.selection-rect');
+      let selStart = null; // { x, y } in wrapper coords
+      let selActive = false;
+      const fileList = pane === 'top' ? elements.fileListTop : elements.fileListBottom;
+
+      const wrapperRect = () => {
+        const r = wrapper.getBoundingClientRect();
+        return { left: r.left, top: r.top, width: r.width, height: r.height };
+      };
+
+      function applyRectSelection() {
+        if (!selStart) return;
+        const r = wrapperRect();
+        const x1 = Math.min(selStart.x, selStart.curX);
+        const y1 = Math.min(selStart.y, selStart.curY);
+        const x2 = Math.max(selStart.x, selStart.curX);
+        const y2 = Math.max(selStart.y, selStart.curY);
+
+        const p = state.panes[pane];
+        if (selStart.additive) {
+          // keep existing selection
+        } else {
+          p.selectedItems.clear();
+        }
+        p.selectedItem = null;
+
+        const hits = [];
+        fileList.querySelectorAll('.file-item').forEach(el => {
+          const er = el.getBoundingClientRect();
+          const overlap = er.left < r.left + x2 && er.right > r.left + x1 &&
+                          er.top < r.top + y2 && er.bottom > r.top + y1;
+          if (overlap) hits.push(el.dataset.path);
+        });
+        hits.forEach(path => p.selectedItems.add(path));
+
+        const setEls = fileList.querySelectorAll('.file-item');
+        setEls.forEach(el => {
+          if (p.selectedItems.has(el.dataset.path)) {
+            el.classList.add('multi-selected');
+            el.classList.remove('selected');
+          } else {
+            el.classList.remove('multi-selected', 'selected');
+          }
+        });
+
+        if (p.selectedItems.size === 1) {
+          const path = [...p.selectedItems][0];
+          p.selectedItem = p.items.find(i => i.path === path) || null;
+          setEls.forEach(el => {
+            if (el.dataset.path === path) el.classList.add('selected');
+          });
+        }
+        updateItemCount(pane);
+        updateInfoPanel(p.selectedItem);
+      }
+
+      function startRubberBand(e) {
+        if (e.button !== 0) return;
+        if (e.target.closest('.file-item')) return;
+        if (e.target === rectEl) return;
+        const r = wrapperRect();
+        const x = e.clientX - r.left;
+        const y = e.clientY - r.top;
+        selStart = { x, y, curX: x, curY: y, additive: e.shiftKey || e.ctrlKey || e.metaKey };
+
+        if (!selStart.additive) {
+          const p = state.panes[pane];
+          p.selectedItem = null;
+          p.selectedItems.clear();
+          fileList.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected', 'multi-selected'));
+          updateItemCount(pane);
+          updateInfoPanel(null);
+        }
+
+        rectEl.style.display = 'block';
+        rectEl.style.left = x + 'px';
+        rectEl.style.top = y + 'px';
+        rectEl.style.width = '0px';
+        rectEl.style.height = '0px';
+        selActive = true;
+        e.preventDefault();
+      }
+
+      wrapper.addEventListener('mousedown', startRubberBand);
+
+      window.addEventListener('mousemove', (e) => {
+        if (!selActive || !selStart) return;
+        const r = wrapperRect();
+        selStart.curX = Math.min(Math.max(e.clientX - r.left, 0), r.width);
+        selStart.curY = Math.min(Math.max(e.clientY - r.top, 0), r.height);
+        const x1 = Math.min(selStart.x, selStart.curX);
+        const y1 = Math.min(selStart.y, selStart.curY);
+        const x2 = Math.max(selStart.x, selStart.curX);
+        const y2 = Math.max(selStart.y, selStart.curY);
+        rectEl.style.left = x1 + 'px';
+        rectEl.style.top = y1 + 'px';
+        rectEl.style.width = (x2 - x1) + 'px';
+        rectEl.style.height = (y2 - y1) + 'px';
+        applyRectSelection();
+      });
+
+      window.addEventListener('mouseup', () => {
+        if (!selActive) return;
+        selActive = false;
+        selStart = null;
+        rectEl.style.display = 'none';
+      });
     });
   }
 
