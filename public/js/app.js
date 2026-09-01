@@ -1428,18 +1428,22 @@
     document.addEventListener('click', hideTreeContextMenu);
 
     // Tree refresh buttons
-    $('#tree-refresh-top').addEventListener('click', () => {
+    $('#tree-refresh-top').addEventListener('click', async () => {
       state.panes.top.treeData = {};
-      state.panes.top.expandedPaths.clear();
       loadTree('top', '');
       loadDisks('top');
+      for (const p of state.panes.top.expandedPaths) {
+        if (p !== '/') await loadTree('top', p);
+      }
       showStatus('上ツリーを更新しました');
     });
-    $('#tree-refresh-bottom').addEventListener('click', () => {
+    $('#tree-refresh-bottom').addEventListener('click', async () => {
       state.panes.bottom.treeData = {};
-      state.panes.bottom.expandedPaths.clear();
       loadTree('bottom', '');
       loadDisks('bottom');
+      for (const p of state.panes.bottom.expandedPaths) {
+        if (p !== '/') await loadTree('bottom', p);
+      }
       showStatus('下ツリーを更新しました');
     });
 
@@ -1738,7 +1742,7 @@
   function updatePaneLabel() {
     const label = $('#pane-label');
     label.textContent = state.activePane === 'top' ? '上ペイン (Tab: 切替)' : '下ペイン (Tab: 切替)';
-    renderTree();
+    renderTree(state.activePane);
   }
 
   // ── Initialize ──
