@@ -1449,8 +1449,8 @@
 
     // Header actions
     $('#btn-upload').addEventListener('click', showUploadDialog);
-    $('#btn-mkdir').addEventListener('click', showMkdirDialog);
-    $('#btn-createfile').addEventListener('click', showCreatefileDialog);
+    $('#btn-mkdir').addEventListener('click', () => showMkdirDialog());
+    $('#btn-createfile').addEventListener('click', () => showCreatefileDialog());
 
     // Reload page after restart (with retry)
     function reloadAfterRestart(delay) {
