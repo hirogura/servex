@@ -1708,22 +1708,38 @@
 
     // Update button
     $('#btn-update').addEventListener('click', async () => {
-      if (!confirm('GitHubから最新コードを取得してアップデートしますか？')) return;
+      if (!confirm('GitHubから最新コードを取得してアップデートしますか？\n（ローカル変更は自動退避して強制更新します）')) return;
+      const btn = $('#btn-update');
+      btn.disabled = true;
       try {
         showStatus('アップデート中...');
-        const r = await fetch('/api/update', { method: 'POST' });
-        const d = await r.json();
+        let r;
+        try {
+          r = await fetch('/api/update', { method: 'POST' });
+        } catch (err) {
+          showStatus('アップデート通信エラー: ' + err.message);
+          alert('アップデート通信エラー:\n' + err.message);
+          return;
+        }
+        let d;
+        try {
+          d = await r.json();
+        } catch (_) {
+          showStatus('アップデートエラー: サーバー応答を解析できません (status ' + r.status + ')');
+          alert('アップデートエラー: サーバー応答を解析できません (status ' + r.status + ')');
+          return;
+        }
         if (d.success) {
           showStatus('アップデート完了。再起動してリロードします...');
-          fetch('/api/restart', { method: 'POST' }).catch(() => {});
+          try { await fetch('/api/restart', { method: 'POST' }); } catch (_) {}
           reloadAfterRestart(3000);
         } else {
-          showStatus('アップデートエラー: ' + (d.error || '不明なエラー'));
+          const msg = d.error || '不明なエラー';
+          showStatus('アップデートエラー: ' + String(msg).split('\n')[0]);
+          alert('アップデートエラー:\n' + msg);
         }
-      } catch (err) {
-        // Network error means server is restarting — that's expected
-        showStatus('アップデート完了。サーバー再起動中...');
-        reloadAfterRestart(5000);
+      } finally {
+        btn.disabled = false;
       }
     });
 

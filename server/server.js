@@ -8,7 +8,7 @@ const archiver = require('archiver');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const { execFile, exec } = require('child_process');
+const { execFile } = require('child_process');
 const { spawn } = require('child_process');
 
 const PORT = parseInt(process.env.PORT || '3359', 10);
@@ -833,27 +833,82 @@ wss.on('connection', (ws, req) => {
 });
 
 // ── Update (git pull from GitHub) ──
+// 方針: ボタン一発で確実に最新化できるよう fetch + reset --hard (強制pull相当) を行う。
+// 従来の `git stash` → `git pull` は以下の理由で失敗しやすかったため見直し:
+//  1. `git stash` が `-u` 無し → untracked ファイルが残り pull が
+//     "untracked working tree files would be overwritten" で失敗する
+//  2. ローカル変更とリモート変更の競合・マージ状態では pull が失敗する
+//  3. `npm install` の timeout 60s では node-pty のネイティブビルドが間に合わない
+//  4. エラー時に e.message しか返さず stdout/stderr が欠落し原因特定が困難
 app.post('/api/update', async (req, res) => {
+  const installDir = process.env.SERVEX_DIR || path.join(__dirname, '..');
+  const logs = [];
+  const pushLog = (label, r) => {
+    const out = [r && r.stdout ? String(r.stdout).trim() : '', r && r.stderr ? String(r.stderr).trim() : '']
+      .filter(Boolean).join('\n');
+    logs.push(`### ${label}\n${out || '(no output)'}`);
+  };
+  const fail = (step, e) => {
+    const detail = [e && e.message ? String(e.message) : String(e),
+      e && e.stdout ? String(e.stdout).trim() : '',
+      e && e.stderr ? String(e.stderr).trim() : ''].filter(Boolean).join('\n');
+    return sendErr(res, `${step} に失敗しました:\n${detail}\n\n--- ログ ---\n${logs.join('\n')}`, 500);
+  };
   try {
-    const installDir = process.env.SERVEX_DIR || path.join(__dirname, '..');
-    // Stash local changes (ignore failure if nothing to stash)
-    try { await sh('git', ['stash'], { cwd: installDir, timeout: 15000 }); } catch (_) {}
-    const pullResult = await sh('git', ['pull', 'origin', 'main'], { cwd: installDir, timeout: 30000 });
-    await sh('npm', ['install', '--production'], { cwd: path.join(installDir, 'server'), timeout: 60000 });
-    res.json({ success: true, message: pullResult.stdout.trim() });
+    // .git の存在確認 (tar配布等で .git が無い場合に分かりやすいエラーにする)
+    try {
+      await sh('git', ['rev-parse', '--git-dir'], { cwd: installDir, timeout: 10000 });
+    } catch (e) {
+      return sendErr(res, 'gitリポジトリが見つかりません。git clone で再インストールしてください:\n' + (e.message || String(e)), 500);
+    }
+    // リモートの最新を取得
+    try {
+      const r = await sh('git', ['fetch', 'origin'], { cwd: installDir, timeout: 60000 });
+      pushLog('git fetch origin', r);
+    } catch (e) { return fail('git fetch', e); }
+    // ローカル変更は stash -u で退避 (untracked 含む。無ければ無視)
+    let stashed = false;
+    try {
+      const status = await sh('git', ['status', '--porcelain'], { cwd: installDir, timeout: 10000 });
+      if (status.stdout.trim()) {
+        const r = await sh('git', ['stash', 'push', '-u', '-m', 'servex-auto-stash'], { cwd: installDir, timeout: 30000 });
+        pushLog('git stash push -u', r);
+        stashed = true;
+      }
+    } catch (_) { /* stash失敗は致命的ではないので続行 */ }
+    // 強制pull相当: origin/main に hard reset (競合・マージ状態でも確実に更新できる)
+    try {
+      const r = await sh('git', ['reset', '--hard', 'origin/main'], { cwd: installDir, timeout: 30000 });
+      pushLog('git reset --hard origin/main', r);
+    } catch (e) { return fail('git reset --hard origin/main', e); }
+    // 依存関係の更新 (timeout延長。--omit=dev を優先し --production にフォールバック)
+    const serverDir = path.join(installDir, 'server');
+    let npmOk = false;
+    let npmErr = null;
+    for (const args of [['install', '--omit=dev'], ['install', '--production']]) {
+      try {
+        const r = await sh('npm', args, { cwd: serverDir, timeout: 300000 });
+        pushLog(`npm ${args.join(' ')}`, r);
+        npmOk = true;
+        break;
+      } catch (e) { npmErr = e; }
+    }
+    if (!npmOk) return fail('npm install', npmErr);
+    res.json({ success: true, message: logs.join('\n'), stashed });
   } catch (e) {
-    sendErr(res, e.message, 500);
+    return fail('アップデート', e);
   }
 });
 
 // ── Restart servEX service ──
 app.post('/api/restart', async (req, res) => {
   try {
+    const svc = process.env.SERVEX_SERVICE || 'servex';
+    if (!/^[A-Za-z0-9_@.:-]+$/.test(svc)) return sendErr(res, 'サービス名が不正です', 400);
     // Respond first, then restart after a short delay so the client gets the response
     res.json({ success: true, message: '再起動します...' });
     setTimeout(() => {
-      const svc = process.env.SERVEX_SERVICE || 'servex';
-      exec(`systemctl restart ${svc}`, (err) => {
+      execFile('systemctl', ['restart', svc], { timeout: 30000 }, (err) => {
         if (err) console.error('Restart failed:', err.message);
       });
     }, 1000);
