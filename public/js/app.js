@@ -213,12 +213,35 @@
       const expanded = p.expandedPaths.has(item.path);
       const active = p.currentPath === item.path;
       const icon = expanded ? TREE_FOLDER_OPEN_SVG : TREE_FOLDER_SVG;
-      return `<div class="tree-item"><div class="tree-item-content ${active ? 'active' : ''}" data-pane="${pane}" data-path="${item.path}" data-has-children="${item.hasChildren}">
+      const escPath = escapeHtml(item.path);
+      const escName = escapeHtml(item.name);
+      return `<div class="tree-item"><div class="tree-item-content ${active ? 'active' : ''}" data-pane="${pane}" data-path="${escPath}" data-has-children="${item.hasChildren}" draggable="true" data-drop-target="true">
         <span class="tree-chevron ${expanded ? 'expanded' : ''}">${item.hasChildren ? '▶' : ''}</span>
         <span class="tree-icon">${icon}</span>
-        <span>${item.name}</span>
+        <span>${escName}</span>
       </div>${expanded && p.treeData[item.path] ? `<div class="tree-children">${renderTreeLevel(pane, p.treeData[item.path], depth + 1)}</div>` : ''}</div>`;
     }).join('');
+  }
+
+  // DnDで自分自身や子孫への移動を防ぐ（toRel形式と/付き形式の混在を吸収）
+  function normP(p) {
+    if (p == null) return '';
+    if (p === '/' || p === '') return '/';
+    return '/' + String(p).replace(/^\/+/, '');
+  }
+  function isDropOntoSelfOrDescendant(sourcePaths, destPath) {
+    if (!Array.isArray(sourcePaths)) return false;
+    if (destPath == null || destPath === '') {
+      // 空文字destはルート相当。移動元がルート自体の場合のみ禁止
+      return sourcePaths.some(src => src === '' || src === '/');
+    }
+    const nd = normP(destPath);
+    return sourcePaths.some(src => {
+      if (src == null || src === '') return false;
+      const ns = normP(src);
+      if (ns === '/') return true; // ルート自体の移動は禁止
+      return nd === ns || nd.startsWith(ns + '/');
+    });
   }
 
   function attachTreeListeners(pane) {
@@ -228,7 +251,96 @@
     container.querySelectorAll('.tree-item-content[data-path]').forEach(el => {
       el.addEventListener('click', handleTreeClick);
       el.addEventListener('contextmenu', handleTreeContextMenu);
+
+      // ── Tree Drag & Drop ──
+      el.addEventListener('dragstart', (e) => {
+        // dataset.path はHTMLエスケープ済み属性から復元された生パス
+        const srcPath = el.dataset.path;
+        e.dataTransfer.setData('application/x-servex-paths', JSON.stringify([srcPath]));
+        e.dataTransfer.setData('text/plain', srcPath);
+        e.dataTransfer.effectAllowed = 'move';
+        try { e.dataTransfer.setDragImage(el, 10, 10); } catch (_) {}
+      });
+
+      el.addEventListener('dragover', (e) => {
+        if (e.dataTransfer.types.includes('application/x-servex-paths') || e.dataTransfer.types.includes('text/plain')) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = 'move';
+        }
+      });
+
+      el.addEventListener('dragenter', (e) => {
+        if (e.dataTransfer.types.includes('application/x-servex-paths') || e.dataTransfer.types.includes('text/plain')) {
+          e.preventDefault();
+          el.classList.add('drag-over');
+        }
+      });
+
+      el.addEventListener('dragleave', () => {
+        el.classList.remove('drag-over');
+      });
+
+      el.addEventListener('drop', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        el.classList.remove('drag-over');
+        const destPath = el.dataset.path;
+        let sourcePaths = null;
+        const raw = e.dataTransfer.getData('application/x-servex-paths');
+        if (raw) {
+          try { sourcePaths = JSON.parse(raw); } catch (_) { sourcePaths = null; }
+        }
+        if (!sourcePaths) {
+          const plain = e.dataTransfer.getData('text/plain');
+          if (plain) sourcePaths = [plain];
+        }
+        if (!sourcePaths || !sourcePaths.length || !destPath && destPath !== '') return;
+        if (isDropOntoSelfOrDescendant(sourcePaths, destPath)) {
+          showStatus('自分自身や子フォルダには移動できません');
+          return;
+        }
+        state.activePane = pane;
+        updatePaneLabel();
+        showDdDialog(sourcePaths, destPath);
+      });
     });
+    // ルート "/ (root)" 行もDnDターゲットにする（renderTree内で生成されるためここで拾う）
+    const rootEl = container.querySelector('.tree-item-content[data-path="/"]');
+    if (rootEl && !rootEl.dataset.dndBound) {
+      rootEl.dataset.dndBound = '1';
+      rootEl.setAttribute('draggable', 'false');
+      rootEl.addEventListener('dragover', (e) => {
+        if (e.dataTransfer.types.includes('application/x-servex-paths') || e.dataTransfer.types.includes('text/plain')) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = 'move';
+        }
+      });
+      rootEl.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        rootEl.classList.add('drag-over');
+      });
+      rootEl.addEventListener('dragleave', () => rootEl.classList.remove('drag-over'));
+      rootEl.addEventListener('drop', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        rootEl.classList.remove('drag-over');
+        const raw = e.dataTransfer.getData('application/x-servex-paths');
+        let sourcePaths = null;
+        if (raw) { try { sourcePaths = JSON.parse(raw); } catch (_) {} }
+        if (!sourcePaths) {
+          const plain = e.dataTransfer.getData('text/plain');
+          if (plain) sourcePaths = [plain];
+        }
+        if (!sourcePaths || !sourcePaths.length) return;
+        // ルート直下への移動は常に許可（自パス判定は不要。ただしルート自体は移動対象になり得ない）
+        if (sourcePaths.length === 1 && (sourcePaths[0] === '/' || sourcePaths[0] === '')) return;
+        state.activePane = pane;
+        updatePaneLabel();
+        showDdDialog(sourcePaths, '/');
+      });
+    }
   }
 
   // ── Tree Context Menu ──
@@ -473,22 +585,24 @@
       const sel = p.selectedItem && p.selectedItem.path === item.path;
       const msel = p.selectedItems.has(item.path);
       const icon = getFileIcon(item);
+      const escPath = escapeHtml(item.path);
+      const escName = escapeHtml(item.name);
 
       if (p.viewMode === 'thumb') {
-        return `<div class="file-item ${sel ? 'selected' : msel ? 'multi-selected' : ''}" 
-                     data-path="${item.path}" data-is-directory="${item.isDirectory}" 
+        return `<div class="file-item ${sel ? 'selected' : msel ? 'multi-selected' : ''}"
+                     data-path="${escPath}" data-is-directory="${item.isDirectory}"
                      data-pane="${pane}" data-drop-target="true" draggable="true">
           <div class="file-icon">${icon}</div>
-          <div class="file-info"><div class="file-name" title="${item.name}">${item.name}</div></div>
+          <div class="file-info"><div class="file-name" title="${escName}">${escName}</div></div>
         </div>`;
       }
 
-      return `<div class="file-item ${sel ? 'selected' : msel ? 'multi-selected' : ''}" 
-                   data-path="${item.path}" data-is-directory="${item.isDirectory}"
+      return `<div class="file-item ${sel ? 'selected' : msel ? 'multi-selected' : ''}"
+                   data-path="${escPath}" data-is-directory="${item.isDirectory}"
                    data-pane="${pane}" data-drop-target="true" draggable="true">
         <div class="file-icon">${icon}</div>
         <div class="file-info">
-          <div class="file-name" title="${item.name}">${item.name}</div>
+          <div class="file-name" title="${escName}">${escName}</div>
           <div class="file-meta">${item.owner}:${item.group}</div>
         </div>
         <span class="file-perms">${item.permissions}</span>
@@ -522,6 +636,20 @@
   }
 
   // ── File Listeners ──
+  function syncFileSelectionClasses(pane) {
+    const p = state.panes[pane];
+    const container = pane === 'top' ? elements.fileListTop : elements.fileListBottom;
+    container.querySelectorAll('.file-item').forEach(el => {
+      const path = el.dataset.path;
+      el.classList.remove('selected', 'multi-selected');
+      if (p.selectedItems.has(path)) {
+        el.classList.add(p.selectedItems.size === 1 ? 'selected' : 'multi-selected');
+      } else if (p.selectedItem && p.selectedItem.path === path && p.selectedItems.size === 0) {
+        el.classList.add('selected');
+      }
+    });
+  }
+
   function attachFileListeners(pane) {
     const container = pane === 'top' ? elements.fileListTop : elements.fileListBottom;
     container.querySelectorAll('.file-item').forEach(el => {
@@ -530,28 +658,58 @@
         const p = state.panes[pane];
 
         if (e.ctrlKey || e.metaKey) {
+          // 単一選択中だった場合はそれを継承して複数選択化する
+          if (p.selectedItems.size === 0 && p.selectedItem) {
+            p.selectedItems.add(p.selectedItem.path);
+          }
           if (p.selectedItems.has(path)) {
             p.selectedItems.delete(path);
-            el.classList.remove('multi-selected');
           } else {
             p.selectedItems.add(path);
-            el.classList.add('multi-selected');
           }
-          p.selectedItem = p.items.find(i => p.selectedItems.has(i.path)) || null;
+          if (p.selectedItems.size === 1) {
+            const only = [...p.selectedItems][0];
+            p.selectedItem = p.items.find(i => i.path === only) || null;
+          } else if (p.selectedItems.size === 0) {
+            p.selectedItem = null;
+          } else {
+            p.selectedItem = p.items.find(i => p.selectedItems.has(i.path)) || null;
+          }
+          syncFileSelectionClasses(pane);
           updateItemCount(pane);
+          updateInfoPanel(p.selectedItems.size <= 1 ? p.selectedItem : null);
           return;
         }
 
-        if (!e.shiftKey) {
-          container.querySelectorAll('.file-item').forEach(i => {
-            i.classList.remove('selected', 'multi-selected');
-          });
-          p.selectedItems.clear();
-          p.selectedItem = p.items.find(i => i.path === path);
-          el.classList.add('selected');
-          updateItemCount(pane);
-          updateInfoPanel(p.selectedItem);
+        if (e.shiftKey) {
+          // Shift+クリックで範囲選択
+          const sorted = sortItems(p.items);
+          const paths = sorted.map(i => i.path);
+          const clickedIdx = paths.indexOf(path);
+          let anchorIdx = -1;
+          const anchorPath = (p.selectedItem && p.selectedItem.path) || [...p.selectedItems][0];
+          if (anchorPath) anchorIdx = paths.indexOf(anchorPath);
+          if (clickedIdx >= 0) {
+            if (anchorIdx < 0) anchorIdx = clickedIdx;
+            const [from, to] = anchorIdx <= clickedIdx ? [anchorIdx, clickedIdx] : [clickedIdx, anchorIdx];
+            if (!e.ctrlKey && !e.metaKey) p.selectedItems.clear();
+            for (let i = from; i <= to; i++) p.selectedItems.add(paths[i]);
+            p.selectedItem = p.items.find(i => i.path === path) || null;
+            syncFileSelectionClasses(pane);
+            updateItemCount(pane);
+            updateInfoPanel(p.selectedItems.size <= 1 ? p.selectedItem : null);
+          }
+          return;
         }
+
+        container.querySelectorAll('.file-item').forEach(i => {
+          i.classList.remove('selected', 'multi-selected');
+        });
+        p.selectedItems.clear();
+        p.selectedItem = p.items.find(i => i.path === path) || null;
+        el.classList.add('selected');
+        updateItemCount(pane);
+        updateInfoPanel(p.selectedItem);
       });
 
       el.addEventListener('dblclick', () => {
@@ -570,13 +728,15 @@
         if (!e.ctrlKey && !e.metaKey && !p.selectedItems.has(path)) {
           p.selectedItems.clear();
           container.querySelectorAll('.file-item.multi-selected').forEach(x => x.classList.remove('multi-selected'));
-          p.selectedItem = p.items.find(i => i.path === path);
+          container.querySelectorAll('.file-item.selected').forEach(x => x.classList.remove('selected'));
+          p.selectedItem = p.items.find(i => i.path === path) || null;
           el.classList.add('selected');
           updateItemCount(pane);
           updateInfoPanel(p.selectedItem);
         }
         state.activePane = pane;
-        showContextMenu(e.clientX, e.clientY);
+        updatePaneLabel();
+        showFileContextMenu(e.clientX, e.clientY);
       });
 
       // Drag & Drop
@@ -586,9 +746,14 @@
         // If the dragged item is in a multi-selection, drag all selected items
         if (p.selectedItems.size > 1 && p.selectedItems.has(el.dataset.path)) {
           e.dataTransfer.setData('application/x-servex-paths', JSON.stringify([...p.selectedItems]));
+        } else if (p.selectedItems.size === 0 && p.selectedItem && p.selectedItem.path === el.dataset.path) {
+          e.dataTransfer.setData('application/x-servex-paths', JSON.stringify([el.dataset.path]));
+        } else if (p.selectedItems.size === 1 && p.selectedItems.has(el.dataset.path)) {
+          e.dataTransfer.setData('application/x-servex-paths', JSON.stringify([...p.selectedItems]));
         } else {
           e.dataTransfer.setData('application/x-servex-paths', JSON.stringify([el.dataset.path]));
         }
+        e.dataTransfer.setData('text/plain', el.dataset.path);
         e.dataTransfer.effectAllowed = 'move';
         el.classList.add('dragging');
       });
@@ -623,13 +788,20 @@
         el.classList.remove('drag-over');
         if (el.dataset.isDirectory !== 'true') return;
         const pathsRaw = e.dataTransfer.getData('application/x-servex-paths');
-        if (!pathsRaw) return;
-        let sourcePaths;
-        try { sourcePaths = JSON.parse(pathsRaw); } catch (_) { return; }
+        let sourcePaths = null;
+        if (pathsRaw) { try { sourcePaths = JSON.parse(pathsRaw); } catch (_) { sourcePaths = null; } }
+        if (!sourcePaths) {
+          const plain = e.dataTransfer.getData('text/plain');
+          if (plain) sourcePaths = [plain];
+        }
         const destPath = el.dataset.path;
-        if (!sourcePaths.length || !destPath) return;
-        // Don't drop onto itself
-        if (sourcePaths.length === 1 && sourcePaths[0] === destPath) return;
+        if (!sourcePaths || !sourcePaths.length || (!destPath && destPath !== '')) return;
+        // 自分自身・子孫へのドロップを防止
+        if (isDropOntoSelfOrDescendant(sourcePaths, destPath)) {
+          showStatus('自分自身や子フォルダには移動できません');
+          return;
+        }
+        state.activePane = pane;
         showDdDialog(sourcePaths, destPath);
       });
     });
@@ -657,7 +829,7 @@
 
   async function ddAction(action) {
     const { sourcePaths, destPath } = ddState || {};
-    if (!sourcePaths || !destPath) return;
+    if (!sourcePaths || (!destPath && destPath !== '')) return;
     hideDdDialog();
 
     if (action === 'copy') {
@@ -681,6 +853,12 @@
       // Refresh both panes that might be affected
       ['top', 'bottom'].forEach(pane => {
         navigateTo(pane, state.panes[pane].currentPath, true);
+      });
+      // ツリー表示も更新（フォルダ構成が変わるため）
+      ['top', 'bottom'].forEach(pane => {
+        state.panes[pane].treeData = {};
+        loadTree(pane, '');
+        state.panes[pane].expandedPaths.forEach(xp => { if (xp && xp !== '/') loadTree(pane, xp); });
       });
     } catch (err) {
       showStatus(`移動エラー: ${err.message}`);
@@ -800,6 +978,18 @@
   }
 
   // ── Context Menu ──
+  // ファイル用メニューの初期HTMLを保持（空白部の右クリックで上書きされても復元できるように）
+  let fileMenuTemplate = null;
+
+  function bindContextMenuItems() {
+    elements.contextMenu.querySelectorAll('.menu-item[data-action]').forEach(el => {
+      el.onclick = (e) => {
+        e.stopPropagation();
+        handleContextAction(el.dataset.action);
+      };
+    });
+  }
+
   function showContextMenu(x, y) {
     const menu = elements.contextMenu;
     menu.style.left = `${x}px`;
@@ -815,40 +1005,82 @@
     }
   }
 
+  function showFileContextMenu(x, y) {
+    if (!fileMenuTemplate) fileMenuTemplate = elements.contextMenu.innerHTML;
+    // 常にファイル用フルメニューを復元する（削除などが消えないように）
+    elements.contextMenu.innerHTML = fileMenuTemplate;
+    // クリップボードがある場合は貼り付け項目を先頭に追加
+    if (state.clipboard && state.clipboard.paths && state.clipboard.paths.length) {
+      const pasteHtml = `<div class="menu-item" data-action="paste"><svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> 貼り付け (${state.clipboard.paths.length}件)</div><div class="menu-divider"></div>`;
+      elements.contextMenu.insertAdjacentHTML('afterbegin', pasteHtml);
+    }
+    bindContextMenuItems();
+    showContextMenu(x, y);
+  }
+
+  function showBackgroundContextMenu(x, y) {
+    if (!fileMenuTemplate) fileMenuTemplate = elements.contextMenu.innerHTML;
+    const svgPaste = '<svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+    const svgMkdir = '<svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>';
+    const svgFile = '<svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>';
+    elements.contextMenu.innerHTML = state.clipboard && state.clipboard.paths && state.clipboard.paths.length
+      ? `<div class="menu-item" data-action="paste">${svgPaste} 貼り付け (${state.clipboard.paths.length}件)</div>
+         <div class="menu-divider"></div>
+         <div class="menu-item" data-action="mkdir">${svgMkdir} フォルダ作成</div>
+         <div class="menu-item" data-action="createfile">${svgFile} ファイル作成</div>`
+      : `<div class="menu-item" data-action="mkdir">${svgMkdir} フォルダ作成</div>
+         <div class="menu-item" data-action="createfile">${svgFile} ファイル作成</div>`;
+    bindContextMenuItems();
+    showContextMenu(x, y);
+  }
+
   function hideContextMenu() {
     elements.contextMenu.classList.remove('show');
+  }
+
+  function getTargetPaths(p) {
+    if (p.selectedItems.size > 0) return [...p.selectedItems];
+    if (p.selectedItem) return [p.selectedItem.path];
+    return [];
   }
 
   async function handleContextAction(action) {
     const pane = state.activePane;
     const p = state.panes[pane];
     const item = p.selectedItem;
-    if (!item && !['copy', 'move'].includes(action)) return;
+    // 選択不要アクションは常に許可。選択が必要なアクションは選択が無い場合のみ弾く
+    const needsSelection = ['open', 'copy', 'move', 'download', 'rename', 'copy-path', 'open-terminal', 'delete'];
+    if (needsSelection.includes(action) && getTargetPaths(p).length === 0) {
+      hideContextMenu();
+      return;
+    }
 
     switch (action) {
       case 'open':
+        if (!item) break;
         if (item.isDirectory) navigateTo(pane, item.path);
         else window.open(`/api/view?path=${encodeURIComponent(item.path)}`, '_blank');
         break;
 
-      case 'copy':
-        state.clipboard = {
-          paths: p.selectedItems.size > 0 ? [...p.selectedItems] : [item.path],
-          action: 'copy'
-        };
+      case 'copy': {
+        const paths = getTargetPaths(p);
+        if (!paths.length) break;
+        state.clipboard = { paths, action: 'copy' };
         showStatus(`${state.clipboard.paths.length}件をコピーしました（貼り付け先で右クリック→貼り付け）`);
         break;
+      }
 
-      case 'move':
-        state.clipboard = {
-          paths: p.selectedItems.size > 0 ? [...p.selectedItems] : [item.path],
-          action: 'move'
-        };
+      case 'move': {
+        const paths = getTargetPaths(p);
+        if (!paths.length) break;
+        state.clipboard = { paths, action: 'move' };
         showStatus(`${state.clipboard.paths.length}件を切り取りました（貼り付け先で右クリック→貼り付け）`);
         break;
+      }
 
       case 'download': {
-        const paths = p.selectedItems.size > 0 ? [...p.selectedItems] : [item.path];
+        const paths = getTargetPaths(p);
+        if (!paths.length) break;
         if (paths.length === 1) {
           const a = document.createElement('a');
           a.href = `/api/download?path=${encodeURIComponent(paths[0])}`;
@@ -876,9 +1108,12 @@
         break;
       }
 
-      case 'rename':
-        showRenameDialog(item);
+      case 'rename': {
+        const target = item || p.items.find(i => getTargetPaths(p).includes(i.path));
+        if (!target) break;
+        showRenameDialog(target);
         break;
+      }
 
       case 'mkdir':
         showMkdirDialog();
@@ -889,19 +1124,27 @@
         break;
 
       case 'copy-path': {
-        const fullPath = ROOT_PREFIX + (item.path ? item.path : '');
+        const target = item || p.items.find(i => getTargetPaths(p).includes(i.path));
+        if (!target) break;
+        const fullPath = ROOT_PREFIX + (target.path ? target.path : '');
         navigator.clipboard.writeText(fullPath).then(() => showStatus('パスをコピーしました'));
         break;
       }
 
       case 'open-terminal': {
+        const target = item || p.items.find(i => getTargetPaths(p).includes(i.path));
         switchToTab('terminal');
-        openTerminalAt(item.isDirectory ? item.path : item.path.split('/').slice(0, -1).join('/') || '/');
+        if (target) {
+          openTerminalAt(target.isDirectory ? target.path : target.path.split('/').slice(0, -1).join('/') || '/');
+        } else {
+          openTerminalAt(p.currentPath);
+        }
         break;
       }
 
       case 'delete': {
-        const paths = p.selectedItems.size > 0 ? [...p.selectedItems] : [item.path];
+        const paths = getTargetPaths(p);
+        if (!paths.length) break;
         const msg = paths.length === 1 ? `「${paths[0].split('/').pop()}」を削除しますか？` : `${paths.length}件のファイルを削除しますか？`;
         if (!confirm(msg)) return;
         try {
@@ -1106,7 +1349,7 @@
   function showRenameDialog(item) {
     showDialog('名前を変更', `
       <label style="display:block;margin-bottom:6px;font-size:12px;color:var(--text-secondary)">新しい名前:</label>
-      <input type="text" class="dialog-input" id="dialog-rename-input" value="${item.name}">
+      <input type="text" class="dialog-input" id="dialog-rename-input" value="${escapeHtml(item.name)}">
     `, async () => {
       const newName = $('#dialog-rename-input').value.trim();
       if (!newName) throw new Error('名前を入力してください');
@@ -1406,10 +1649,9 @@
       });
     });
 
-    // Context menu
-    $$('.menu-item[data-action]').forEach(item => {
-      item.addEventListener('click', () => handleContextAction(item.dataset.action));
-    });
+    // Context menu（各表示時に動的バインドするため初期バインドは不要。テンプレ確保のみ）
+    fileMenuTemplate = elements.contextMenu.innerHTML;
+    bindContextMenuItems();
 
     document.addEventListener('click', hideContextMenu);
 
@@ -1572,7 +1814,7 @@
       const wrapper = $(`.file-list-wrapper[data-pane="${pane}"]`);
 
       wrapper.addEventListener('dragover', (e) => {
-        if (e.dataTransfer.types.includes('application/x-servex-paths')) {
+        if (e.dataTransfer.types.includes('application/x-servex-paths') || e.dataTransfer.types.includes('text/plain')) {
           e.preventDefault();
           e.dataTransfer.dropEffect = 'move';
         }
@@ -1580,13 +1822,30 @@
 
       wrapper.addEventListener('drop', (e) => {
         if (e.target.closest('.file-item')) return; // handled by file-item drop
+        let sourcePaths = null;
         const pathsRaw = e.dataTransfer.getData('application/x-servex-paths');
-        if (!pathsRaw) return;
+        if (pathsRaw) { try { sourcePaths = JSON.parse(pathsRaw); } catch (_) { sourcePaths = null; } }
+        if (!sourcePaths) {
+          const plain = e.dataTransfer.getData('text/plain');
+          if (plain) sourcePaths = [plain];
+        }
+        if (!sourcePaths || !sourcePaths.length) return;
         e.preventDefault();
-        let sourcePaths;
-        try { sourcePaths = JSON.parse(pathsRaw); } catch (_) { return; }
         const destPath = state.panes[pane].currentPath;
-        if (!sourcePaths.length) return;
+        if (isDropOntoSelfOrDescendant(sourcePaths, destPath)) {
+          showStatus('自分自身や子フォルダには移動できません');
+          return;
+        }
+        // 同一フォルダへのドロップは無視
+        const sameDir = sourcePaths.every(sp => {
+          const parent = sp.includes('/') ? sp.slice(0, sp.lastIndexOf('/')) || '/' : '/';
+          // toRel形式とcurrentPath形式の差異を吸収
+          const normParent = parent === '' ? '/' : ('/' + parent.replace(/^\/+/, ''));
+          const normDest = destPath === '' ? '/' : destPath;
+          return normParent === normDest;
+        });
+        if (sameDir) return;
+        state.activePane = pane;
         showDdDialog(sourcePaths, destPath);
       });
 
@@ -1606,25 +1865,12 @@
       });
 
       wrapper.addEventListener('contextmenu', (e) => {
-        if (e.target === wrapper || e.target.classList.contains('file-list')) {
+        if (e.target === wrapper || e.target.classList.contains('file-list') || e.target.classList.contains('empty-state') || e.target.closest('.empty-state')) {
           e.preventDefault();
+          e.stopPropagation();
           state.activePane = pane;
           updatePaneLabel();
-          // Show paste option
-          const svgPaste = '<svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
-          const svgMkdir = '<svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>';
-          const svgFile = '<svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>';
-          elements.contextMenu.innerHTML = state.clipboard
-            ? `<div class="menu-item" data-action="paste">${svgPaste} 貼り付け (${state.clipboard.paths.length}件)</div>
-               <div class="menu-divider"></div>
-               <div class="menu-item" data-action="mkdir">${svgMkdir} フォルダ作成</div>
-               <div class="menu-item" data-action="createfile">${svgFile} ファイル作成</div>`
-            : `<div class="menu-item" data-action="mkdir">${svgMkdir} フォルダ作成</div>
-               <div class="menu-item" data-action="createfile">${svgFile} ファイル作成</div>`;
-          elements.contextMenu.querySelectorAll('.menu-item').forEach(item => {
-            item.addEventListener('click', () => handleContextAction(item.dataset.action));
-          });
-          showContextMenu(e.clientX, e.clientY);
+          showBackgroundContextMenu(e.clientX, e.clientY);
         }
       });
 
@@ -1678,11 +1924,14 @@
           const path = [...p.selectedItems][0];
           p.selectedItem = p.items.find(i => i.path === path) || null;
           setEls.forEach(el => {
-            if (el.dataset.path === path) el.classList.add('selected');
+            if (el.dataset.path === path) {
+              el.classList.remove('multi-selected');
+              el.classList.add('selected');
+            }
           });
         }
         updateItemCount(pane);
-        updateInfoPanel(p.selectedItem);
+        updateInfoPanel(p.selectedItems.size <= 1 ? p.selectedItem : null);
       }
 
       function startRubberBand(e) {
