@@ -1849,7 +1849,11 @@
         showDdDialog(sourcePaths, destPath);
       });
 
+      // ラバーバンド直後のclickによる選択解除を抑止するためのフラグ
+      let justRubberSelected = false;
+
       wrapper.addEventListener('click', (e) => {
+        if (justRubberSelected) return;
         if (e.target === wrapper || e.target.classList.contains('file-list')) {
           state.activePane = pane;
           updatePaneLabel();
@@ -1878,6 +1882,8 @@
       const rectEl = wrapper.querySelector('.selection-rect');
       let selStart = null; // { x, y } in wrapper coords
       let selActive = false;
+      let selMoved = false; // しきい値を超えたドラッグになったか
+      const RUBBER_THRESHOLD = 5; // px: これ以下の移動はクリックとみなす
       const fileList = pane === 'top' ? elements.fileListTop : elements.fileListBottom;
 
       const wrapperRect = () => {
@@ -1942,22 +1948,10 @@
         const x = e.clientX - r.left;
         const y = e.clientY - r.top;
         selStart = { x, y, curX: x, curY: y, additive: e.shiftKey || e.ctrlKey || e.metaKey };
-
-        if (!selStart.additive) {
-          const p = state.panes[pane];
-          p.selectedItem = null;
-          p.selectedItems.clear();
-          fileList.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected', 'multi-selected'));
-          updateItemCount(pane);
-          updateInfoPanel(null);
-        }
-
-        rectEl.style.display = 'block';
-        rectEl.style.left = x + 'px';
-        rectEl.style.top = y + 'px';
-        rectEl.style.width = '0px';
-        rectEl.style.height = '0px';
         selActive = true;
+        selMoved = false;
+        // mousedown時点では選択を変更しない（単なるクリックとの区別のため）。
+        // しきい値を超えたドラッグになった時点で初めて矩形表示と選択クリアを行う。
         e.preventDefault();
       }
 
@@ -1968,6 +1962,29 @@
         const r = wrapperRect();
         selStart.curX = Math.min(Math.max(e.clientX - r.left, 0), r.width);
         selStart.curY = Math.min(Math.max(e.clientY - r.top, 0), r.height);
+        if (!selMoved) {
+          const dx = Math.abs(selStart.curX - selStart.x);
+          const dy = Math.abs(selStart.curY - selStart.y);
+          if (dx < RUBBER_THRESHOLD && dy < RUBBER_THRESHOLD) return;
+          // ドラッグ確定: 非加算モードならここで既存選択をクリア
+          selMoved = true;
+          if (!selStart.additive) {
+            const p = state.panes[pane];
+            p.selectedItem = null;
+            p.selectedItems.clear();
+            fileList.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected', 'multi-selected'));
+            updateItemCount(pane);
+            updateInfoPanel(null);
+          }
+          rectEl.style.display = 'block';
+        }
+        // 端付近では自動スクロールして長い一覧でも選択しやすくする
+        try {
+          const fr = fileList.getBoundingClientRect();
+          const EDGE = 32, STEP = 12;
+          if (e.clientY < fr.top + EDGE) fileList.scrollTop -= STEP;
+          else if (e.clientY > fr.bottom - EDGE) fileList.scrollTop += STEP;
+        } catch (_) {}
         const x1 = Math.min(selStart.x, selStart.curX);
         const y1 = Math.min(selStart.y, selStart.curY);
         const x2 = Math.max(selStart.x, selStart.curX);
@@ -1982,7 +1999,20 @@
       window.addEventListener('mouseup', () => {
         if (!selActive) return;
         selActive = false;
+        rectEl.style.display = 'none';
+        if (selMoved) {
+          // ドラッグ後のclickイベントによる選択解除を抑止する
+          justRubberSelected = true;
+          setTimeout(() => { justRubberSelected = false; }, 150);
+        }
         selStart = null;
+        selMoved = false;
+      });
+      window.addEventListener('blur', () => {
+        if (!selActive) return;
+        selActive = false;
+        selStart = null;
+        selMoved = false;
         rectEl.style.display = 'none';
       });
     });
