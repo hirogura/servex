@@ -19,7 +19,7 @@
 
   // ── Tree Icons ──
   const TREE_FOLDER_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#89b4fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>';
-  const TREE_FOLDER_OPEN_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#89b4fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1"/><path d="M3 14h4l2 2"/></svg>';
+  const TREE_FOLDER_OPEN_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#89b4fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8V6a2 2 0 012-2h5l2 2h7a2 2 0 012 2v1"/><path d="M2 12h20v7a2 2 0 01-2 2H4a2 2 0 01-2-2v-7z"/></svg>';
 
   // ── DOM References ──
   const $ = (sel) => document.querySelector(sel);
